@@ -1,13 +1,18 @@
 """Fetch real historical Kalshi candlestick data and build MarketHistory
 objects suitable for the backtester.
 
-Kalshi's candlesticks endpoint is:
+Kalshi's candlesticks endpoint:
   GET /series/{series_ticker}/markets/{ticker}/candlesticks
+  params: start_ts, end_ts (unix seconds), period_interval (1, 60, or 1440 min)
 
-The series ticker isn't always on the market object. We try several
-fallbacks: the explicit `series_ticker` field, the first segment of
-`event_ticker` (a Kalshi convention - e.g. KXBTC-25DEC31H-T110K has series
-KXBTC), and finally the first segment of the market ticker itself.
+Kalshi limits how much data you can pull per call — small intervals support
+a smaller window. We default to 60-minute candles over 7 days which lands
+well inside every limit and also means low-activity markets still produce
+enough bars to backtest on.
+
+A lot of Kalshi's open markets (all those `KXMV…` multi-variant baskets)
+have never traded and therefore have zero candles. We filter by 24h
+volume so those markets don't even get fetched.
 """
 from __future__ import annotations
 
@@ -27,6 +32,17 @@ def _cents(v, default=None) -> float | None:
         return float(v) / 100.0
     except (TypeError, ValueError):
         return default
+
+
+def _int_field(m: dict, *keys: str) -> int:
+    for k in keys:
+        v = m.get(k)
+        if v is not None:
+            try:
+                return int(v)
+            except (TypeError, ValueError):
+                pass
+    return 0
 
 
 def extract_series_ticker(m: dict) -> str | None:
@@ -49,12 +65,12 @@ def fetch_history(
     client: KalshiClient,
     series_ticker: str,
     ticker: str,
-    lookback_hours: int = 72,
-    period_minutes: int = 1,
+    lookback_hours: int = 168,       # 7 days
+    period_minutes: int = 60,         # hourly candles: widely supported
     synthetic_spread: float = 0.01,
 ) -> MarketHistory:
     """Fetch candles and produce a MarketHistory in our internal format."""
-    end = dt.datetime.utcnow()
+    end = dt.datetime.now(dt.timezone.utc)
     start = end - dt.timedelta(hours=lookback_hours)
     payload = client.get_candles(series_ticker=series_ticker, ticker=ticker,
                                  start=start, end=end, period_minutes=period_minutes)
@@ -90,8 +106,8 @@ def fetch_history(
     return MarketHistory(ticker=ticker, df=df)
 
 
-def fetch_open_markets(client: KalshiClient, limit: int = 50) -> list[dict]:
-    """List current open markets. Each dict includes ticker + event_ticker."""
+def fetch_open_markets(client: KalshiClient, limit: int = 500) -> list[dict]:
+    """List current open markets, paginated as needed. Caller can filter/sort."""
     out: list[dict] = []
     cursor = None
     while len(out) < limit:
@@ -105,32 +121,61 @@ def fetch_open_markets(client: KalshiClient, limit: int = 50) -> list[dict]:
     return out[:limit]
 
 
+def rank_markets(markets: list[dict]) -> list[dict]:
+    """Sort markets by best proxy for liquidity so we try the most useful
+    ones first. Kalshi returns them in no particular order otherwise."""
+    return sorted(
+        markets,
+        key=lambda m: (
+            _int_field(m, "volume_24h", "volume24h"),
+            _int_field(m, "open_interest", "openInterest"),
+            _int_field(m, "volume"),
+        ),
+        reverse=True,
+    )
+
+
 def fetch_universe(
     client: KalshiClient,
     tickers: Iterable[str] | None = None,
     series_map: dict[str, str] | None = None,
     limit: int = 24,
-    lookback_hours: int = 72,
-    min_bars: int = 30,
+    candidate_pool: int = 400,
+    lookback_hours: int = 168,
+    period_minutes: int = 60,
+    min_volume_24h: int = 1,
+    min_bars: int = 20,
     verbose: bool = True,
 ) -> list[MarketHistory]:
-    """Build a universe of MarketHistory objects from live Kalshi markets.
+    """Pull a liquidity-sorted universe of markets and return MarketHistory
+    objects for those that actually have backtestable candle data.
 
-    Verbose logging makes it obvious which markets yielded data and why
-    others were skipped.
+    * `candidate_pool`: how many open markets to fetch and rank before we
+      start requesting candlesticks. 400 is enough to get past all the
+      multi-variant basket markets that have zero trades.
+    * `min_volume_24h`: skip markets that haven't traded at all in 24h -
+      candlesticks for those come back empty.
+    * Stops early once we have `limit` usable histories.
     """
     if tickers is None:
-        markets = fetch_open_markets(client, limit=limit)
+        markets = fetch_open_markets(client, limit=candidate_pool)
         if verbose:
-            print(f"[fetch-history] found {len(markets)} open markets")
+            print(f"[fetch-history] fetched {len(markets)} open markets")
         if not markets:
             return []
+        markets = [m for m in markets
+                   if _int_field(m, "volume_24h", "volume24h") >= min_volume_24h]
+        markets = rank_markets(markets)
+        if verbose:
+            print(f"[fetch-history] {len(markets)} have vol_24h>={min_volume_24h}")
         series_map = {m["ticker"]: extract_series_ticker(m) for m in markets}
         tickers = [m["ticker"] for m in markets]
 
     histories: list[MarketHistory] = []
     attempts = 0
     for t in tickers:
+        if len(histories) >= limit:
+            break
         attempts += 1
         series = (series_map or {}).get(t)
         if not series:
@@ -139,7 +184,8 @@ def fetch_universe(
             continue
         try:
             h = fetch_history(client, series_ticker=series, ticker=t,
-                              lookback_hours=lookback_hours)
+                              lookback_hours=lookback_hours,
+                              period_minutes=period_minutes)
             if len(h.df) >= min_bars:
                 histories.append(h)
                 if verbose:
@@ -154,5 +200,6 @@ def fetch_universe(
             if verbose:
                 print(f"  [skip] {t}: {type(e).__name__}: {e}")
     if verbose:
-        print(f"[fetch-history] produced {len(histories)}/{attempts} usable histories")
+        print(f"[fetch-history] kept {len(histories)} usable histories "
+              f"after {attempts} attempts")
     return histories

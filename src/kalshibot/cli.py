@@ -246,7 +246,12 @@ def backtest_live_cmd(
 @app.command("setup-live")
 def setup_live_cmd(
     markets: int = typer.Option(24, help="Markets to fetch history for"),
-    lookback_hours: int = typer.Option(72),
+    lookback_hours: int = typer.Option(168, help="Candle lookback window"),
+    period_minutes: int = typer.Option(60, help="Candle interval (1, 60, 1440)"),
+    candidate_pool: int = typer.Option(400,
+        help="How many open markets to scan before picking ones with real data"),
+    min_volume_24h: int = typer.Option(1,
+        help="Skip markets without any trades in the last 24h"),
     fallback_synth_markets: int = typer.Option(24,
         help="If real data fails, synthesize this many to still build an ensemble"),
     port: int = typer.Option(8080),
@@ -286,8 +291,15 @@ def setup_live_cmd(
     universe = []
     if chk.get("public_ok"):
         try:
-            universe = fetch_universe(client, limit=markets,
-                                      lookback_hours=lookback_hours, verbose=True)
+            universe = fetch_universe(
+                client,
+                limit=markets,
+                candidate_pool=candidate_pool,
+                lookback_hours=lookback_hours,
+                period_minutes=period_minutes,
+                min_volume_24h=min_volume_24h,
+                verbose=True,
+            )
         except Exception as e:
             console.print(f"  [yellow]fetch raised: {e}[/yellow]")
     else:
