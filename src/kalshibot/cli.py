@@ -331,12 +331,25 @@ def setup_live_cmd(
     console.print(f"  [green]ensemble saved[/green] - Sharpe {combo.sharpe:+.2f}, "
                   f"{int((combo.weights > 0).sum())} active strategies")
 
-    # 4. Launch the web server
+    # 4. Launch the web server and auto-start the live feed
     console.print("[bold cyan]4/4  Launching web UI[/bold cyan]")
     from .web import create_app
     from .web.state import AppState
     state = AppState()
     web_app = create_app(state)
+
+    if chk.get("public_ok"):
+        try:
+            from .live import LiveFeed
+            feed = LiveFeed(cfg=cfg, combo=state.report.combo if state.report else None,
+                            client=client)
+            feed.start()
+            state.set_live(feed)
+            console.print("[green]  live feed auto-started; "
+                          "open Live tab to watch signals[/green]")
+        except Exception as e:
+            console.print(f"  [yellow]could not auto-start live feed: {e}[/yellow]")
+
     console.print(f"[green]Open http://127.0.0.1:{port}  (Ctrl+C to stop)[/green]")
     web_app.run(host="127.0.0.1", port=port, debug=False, use_reloader=False)
 

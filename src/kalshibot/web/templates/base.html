@@ -5,7 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>{% block title %}Kalshibot{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}" />
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"
+          onerror="window.__chartCdnFailed=true"></script>
+  <script src="{{ url_for('static', filename='chart_fallback.js') }}"></script>
 </head>
 <body>
 <div class="shell">
@@ -16,12 +18,12 @@
     </div>
     <nav class="nav">
       <a href="{{ url_for('index') }}"            class="{% if page=='overview'  %}active{% endif %}"><span class="dot"></span>Overview</a>
+      <a href="{{ url_for('live_page') }}"        class="nav-live {% if page=='live'      %}active{% endif %}"><span class="dot"></span>Live Kalshi feed</a>
       <a href="{{ url_for('strategies_page') }}"  class="{% if page=='strategies'%}active{% endif %}"><span class="dot"></span>Strategies</a>
       <a href="{{ url_for('genres_page') }}"      class="{% if page=='genres'    %}active{% endif %}"><span class="dot"></span>Genres</a>
       <a href="{{ url_for('markets_page') }}"     class="{% if page=='markets'   %}active{% endif %}"><span class="dot"></span>Markets</a>
       <a href="{{ url_for('ensemble_page') }}"    class="{% if page=='ensemble'  %}active{% endif %}"><span class="dot"></span>Ensemble</a>
       <a href="{{ url_for('reliability_page') }}" class="{% if page=='reliability'%}active{% endif %}"><span class="dot"></span>Calibration</a>
-      <a href="{{ url_for('live_page') }}"        class="{% if page=='live'      %}active{% endif %}"><span class="dot"></span>Live suggestions</a>
       <a href="{{ url_for('backtest_page') }}"    class="{% if page=='backtest'  %}active{% endif %}"><span class="dot"></span>Run backtest</a>
       <a href="{{ url_for('settings_page') }}"    class="{% if page=='settings'  %}active{% endif %}"><span class="dot"></span>Settings</a>
     </nav>

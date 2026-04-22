@@ -314,6 +314,78 @@ def rsi_regime(rsi_n: int, regime_n: int) -> PredictFn:
     return fn
 
 
+def near_close_convergence(threshold_minutes: float, aggressiveness: float = 8.0) -> PredictFn:
+    """Wolfers-Zitzewitz style: close to resolution, the current market is a
+    near-perfect estimate of the outcome probability. Outside the window,
+    stay neutral so this strategy doesn't over-trade illiquid midweek prices.
+    """
+    def fn(h: MarketHistory) -> pd.Series:
+        m = h.mid
+        ttc = h.df["minutes_to_close"].clip(lower=0)
+        active = (ttc < threshold_minutes).astype(float)
+        drift = (h.df["last"] - m)
+        # Within window, ride the last-trade signal hard; elsewhere neutral.
+        return 0.5 * (1 - active) + active * F.sigmoid(drift * aggressiveness + F.logit(m))
+    return fn
+
+
+def favorite_longshot_bias(bias: float = 0.04) -> PredictFn:
+    """Empirical finding across prediction markets: contracts priced below
+    ~15% are systematically too cheap (longshots over-priced) and contracts
+    above ~85% are systematically too expensive (favorites under-priced).
+    This strategy leans slightly against those extremes.
+    """
+    def fn(h: MarketHistory) -> pd.Series:
+        m = h.mid
+        # Smooth shrinkage: price - bias*(price - 0.5) * extremeness
+        extremeness = (2 * (m - 0.5)).abs().clip(0, 1) ** 2
+        adj = m - bias * (m - 0.5) * extremeness * 3
+        return adj.clip(0.01, 0.99)
+    return fn
+
+
+def vig_arbitrage(sensitivity: float = 6.0) -> PredictFn:
+    """When YES bid + NO bid > 1 (equivalent to YES_ask < 1 - NO_ask), there
+    is negative vig - free edge. We don't have explicit NO prices in our
+    simplified feed, but the asymmetry between yes_bid, yes_ask, and the
+    last trade implicitly carries this information.
+    """
+    def fn(h: MarketHistory) -> pd.Series:
+        mid = h.mid
+        last = h.df["last"]
+        spread = (h.df["yes_ask"] - h.df["yes_bid"]).clip(lower=1e-4)
+        # If last > mid + 0.4*spread, there's YES pressure beyond the spread.
+        pressure = (last - mid) / spread
+        return F.sigmoid(pressure * sensitivity)
+    return fn
+
+
+def momentum_reversion_hybrid(fast: int, slow: int) -> PredictFn:
+    """Inside-day momentum + across-day mean reversion, classic combo that
+    does well on event markets where news creates bursts but prices
+    regress to their fundamental level over a day.
+    """
+    def fn(h: MarketHistory) -> pd.Series:
+        m = h.mid
+        intraday_mom = F.ema(m, fast) - F.ema(m, slow)
+        long_anchor = F.sma(m, slow * 3)
+        score = intraday_mom * 12 + (long_anchor - m) * 4
+        return F.sigmoid(score)
+    return fn
+
+
+def spread_crossing(k: float = 3.0) -> PredictFn:
+    """When recent trades print above the mid repeatedly, buying pressure
+    predicts continued YES drift (Lehalle-style microstructure signal).
+    """
+    def fn(h: MarketHistory) -> pd.Series:
+        mid = h.mid
+        last = h.df["last"]
+        cross = (last - mid).rolling(5, min_periods=1).mean()
+        return F.sigmoid(cross * k * 10)
+    return fn
+
+
 # ---------------------------------------------------------------------------
 # Build the catalog. Aim for ~100 distinct strategies.
 # ---------------------------------------------------------------------------
@@ -424,6 +496,27 @@ def _build() -> list[Strat]:
     # RSI regime (4)
     for rn, rg in [(7, 30), (14, 30), (14, 60), (21, 60)]:
         out.append(Strat(f"rsi_regime_{rn}_{rg}", rsi_regime(rn, rg)))
+
+    # --- Research-backed alpha sources ---
+    # Near-close convergence (Wolfers-Zitzewitz) — 5 horizons
+    for minutes in [15, 60, 180, 360, 720]:
+        out.append(Strat(f"near_close_{minutes}", near_close_convergence(minutes)))
+
+    # Favorite-longshot bias fade — 3 intensities
+    for bias in [0.02, 0.04, 0.08]:
+        out.append(Strat(f"flb_{int(bias*100)}", favorite_longshot_bias(bias)))
+
+    # Vig / microstructure pressure — 3 sensitivities
+    for sens in [3.0, 6.0, 10.0]:
+        out.append(Strat(f"vig_{int(sens)}", vig_arbitrage(sens)))
+
+    # Momentum-reversion hybrid — 4 timescales
+    for fast, slow in [(5, 20), (10, 30), (15, 60), (20, 80)]:
+        out.append(Strat(f"momrev_{fast}_{slow}", momentum_reversion_hybrid(fast, slow)))
+
+    # Spread-crossing (microstructure) — 2 scales
+    for k in [2.0, 5.0]:
+        out.append(Strat(f"spread_cross_{int(k)}", spread_crossing(k)))
 
     return out
 
