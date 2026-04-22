@@ -41,7 +41,9 @@
   <aside class="sidebar">
     <nav class="nav">
       <a href="{{ url_for('live_page') }}"        class="{% if page=='live'      %}active{% endif %}"><span class="dot"></span>Live feed</a>
+      <a href="{{ url_for('paperbots_page') }}"   class="{% if page=='paperbots' %}active{% endif %}"><span class="dot"></span>Paper bots</a>
       <a href="{{ url_for('trades_page') }}"      class="{% if page=='trades'    %}active{% endif %}"><span class="dot"></span>My trades</a>
+      <a href="{{ url_for('weather_page') }}"     class="{% if page=='weather'   %}active{% endif %}"><span class="dot"></span>Weather map</a>
       <a href="{{ url_for('popular_page') }}"     class="{% if page=='popular'   %}active{% endif %}"><span class="dot"></span>Popular markets</a>
       <a href="{{ url_for('index') }}"            class="{% if page=='overview'  %}active{% endif %}"><span class="dot"></span>Dashboard</a>
       <a href="{{ url_for('strategies_page') }}"  class="{% if page=='strategies'%}active{% endif %}"><span class="dot"></span>Strategies</a>

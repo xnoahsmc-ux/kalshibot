@@ -22,6 +22,8 @@ from .bot import kelly_fraction, snapshot_from_market
 from .combiner import Combination
 from .config import Config
 from .data import MarketHistory
+from .external_data import ESPNClient, NWSClient
+from .fair_value import FairValue, blend, fair_value
 from .genres import classify
 from .kalshi_client import KalshiClient
 from .strategies.registry import by_name
@@ -49,6 +51,9 @@ class LiveSignal:
     win_prob: float = 0.0          # probability bot assigns to winning the bet
     expected_profit: float = 0.0   # dollars per dollar bet, given win/loss odds
     rationale: str = ""            # plain-English reason for the call
+    fair_value_source: str = ""    # "NWS" / "ESPN" / ""
+    fair_value_prob: float | None = None  # external fair value if any
+    fair_value_detail: str = ""
 
 
 @dataclass
@@ -82,6 +87,9 @@ class LiveFeed:
         self._titles: dict[str, str] = {}
         self._signals: dict[str, LiveSignal] = {}
         self._status = LiveStatus()
+        self._nws = NWSClient()
+        self._espn = ESPNClient()
+        self._paper_manager = None  # set by AppState
 
     # ------------------------------------------------------------------ API
     def status(self) -> LiveStatus:
@@ -175,12 +183,26 @@ class LiveFeed:
             except Exception as e:
                 # One flaky ticker should never kill the whole poll
                 self._status.last_error = f"{ticker}: {type(e).__name__}: {e}"
+        # After updating all signals, let the paper bots act on them.
+        if self._paper_manager is not None:
+            try:
+                self._paper_manager.process(list(self._signals.values()))
+            except Exception as e:
+                self._status.last_error = f"paper manager: {type(e).__name__}: {e}"
 
     def _signal_for(self, ticker: str, h: MarketHistory, snap) -> LiveSignal:
         title = self._titles.get(ticker, ticker)
         mid = snap.mid
         genre = classify(ticker, title).genre
-        prob, disp = self._ensemble_prob(h)
+        ensemble_prob, disp = self._ensemble_prob(h)
+        # Blend with real external data when available - weather (NWS) and
+        # sports (ESPN). Gives a big accuracy bump on those markets.
+        fv: FairValue | None = None
+        try:
+            fv = fair_value(ticker, title, nws=self._nws, espn=self._espn)
+        except Exception:
+            fv = None
+        prob = blend(ensemble_prob, fv)
         edge = prob - mid
         f = kelly_fraction(prob, mid)
         disp_scale = max(0.1, 1.0 - 2 * disp)
@@ -235,8 +257,9 @@ class LiveFeed:
             else:
                 rationale = "Strategies disagree too much."
         else:
+            src = f" ({fv.source})" if fv else ""
             rationale = (f"Bot sees {win_prob*100:.0f}% chance of winning vs market's "
-                          f"{entry_price*100:.0f}% implied probability.")
+                          f"{entry_price*100:.0f}% implied probability.{src}")
 
         return LiveSignal(
             ticker=ticker,
@@ -259,6 +282,9 @@ class LiveFeed:
             win_prob=float(win_prob),
             expected_profit=float(expected_profit),
             rationale=rationale,
+            fair_value_source=(fv.source if fv else ""),
+            fair_value_prob=(fv.prob_yes if fv else None),
+            fair_value_detail=(fv.detail if fv else ""),
         )
 
     def _ensemble_prob(self, h: MarketHistory) -> tuple[float, float]:

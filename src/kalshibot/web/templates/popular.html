@@ -32,6 +32,28 @@ function confPill(conf) {
   return `<span class="conf conf-${conf}"><span class="dot"></span>${label}</span>`;
 }
 
+// Genre-appropriate fallback emoji + accent color when images can't load.
+const GENRE_EMOJI = {
+  sports: '🏟️', weather: '🌡️', politics: '🗳️', economy: '💰',
+  crypto: '₿', equities: '📈', entertainment: '🎬',
+  science: '🛰️', world: '🌍', culture: '⭐', other: '📊',
+};
+const GENRE_HERO = {
+  sports: 'sports,stadium', weather: 'weather,storm',
+  politics: 'capitol,politics', economy: 'finance,money',
+  crypto: 'bitcoin,crypto', equities: 'wall-street',
+  entertainment: 'cinema,concert', science: 'space,rocket',
+  world: 'world,flag', culture: 'celebrity,neon', other: 'news',
+};
+
+function heroImage(genre) {
+  // Use source.unsplash.com which redirects to a random Unsplash photo
+  // for the given keyword. If the request fails the <img> onerror handler
+  // flips the element to a gradient + emoji fallback.
+  const kw = encodeURIComponent(GENRE_HERO[genre] || 'abstract');
+  return `https://source.unsplash.com/400x120/?${kw}`;
+}
+
 function sidePill(side) {
   const cls = side === 'YES' ? 'side-yes' : side === 'NO' ? 'side-no' : 'side-flat';
   return `<span class="pill ${cls}">${side}</span>`;
@@ -76,14 +98,24 @@ async function load() {
     }
     emptyEl.style.display = 'none';
     grid.innerHTML = markets.map((m, i) => `
-      <div class="card" id="pop-${i}" style="padding:16px;">
-        <div class="row" style="justify-content:space-between; margin-bottom:8px;">
-          <span class="pill">${m.genre}</span>
-          ${confPill(m.confidence)}
+      <div class="card" id="pop-${i}" style="padding:0; overflow:hidden;">
+        <div class="hero" id="hero-${i}" style="position:relative; height:110px; background:linear-gradient(135deg, var(--bg-muted), var(--bg-elev));">
+          <img src="${heroImage(m.genre)}" loading="lazy"
+               style="width:100%; height:100%; object-fit:cover; opacity:0.55;"
+               onerror="this.style.display='none'; document.getElementById('hero-fallback-${i}').style.display='flex';">
+          <div id="hero-fallback-${i}" style="display:none; position:absolute; inset:0; align-items:center; justify-content:center; font-size:50px;">
+            ${GENRE_EMOJI[m.genre] || '📊'}
+          </div>
+          <div style="position:absolute; inset:auto 12px 10px 12px; display:flex; justify-content:space-between; gap:8px;">
+            <span class="pill">${m.genre}</span>
+            ${confPill(m.confidence)}
+          </div>
+          <div style="position:absolute; inset:0; background:linear-gradient(180deg, rgba(6,8,15,0) 40%, rgba(6,8,15,0.85));"></div>
         </div>
+        <div style="padding:14px 16px 16px;">
         <div style="font-size:14px; font-weight:700; margin-bottom:4px; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${m.title || m.ticker}</div>
         <div class="mono dim" style="font-size:11px; margin-bottom:10px;">${m.ticker}</div>
-        <div style="height:70px;"><canvas id="spark-${i}"></canvas></div>
+        <div style="height:50px;"><canvas id="spark-${i}"></canvas></div>
         <div class="row" style="justify-content:space-between; margin-top:10px;">
           <div>
             <div style="font-size:11px; color:var(--text-mute); letter-spacing:.08em; text-transform:uppercase; font-weight:700;">Price</div>
@@ -96,6 +128,7 @@ async function load() {
           <div style="text-align:right;">
             ${sidePill(m.suggested_side)}
           </div>
+        </div>
         </div>
       </div>
     `).join('');

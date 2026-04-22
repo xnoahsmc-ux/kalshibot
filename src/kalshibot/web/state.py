@@ -12,6 +12,7 @@ from typing import Any
 
 from ..analytics import BacktestReport
 from ..live import LiveFeed
+from ..paper import PaperManager
 
 
 @dataclass
@@ -33,7 +34,12 @@ class AppState:
         self._jobs: dict[str, JobStatus] = {}
         self._lock = threading.Lock()
         self._live: LiveFeed | None = None
+        self._paper = PaperManager()
+        self._paper.seed_defaults()
         self._load_if_exists()
+
+    def paper(self) -> PaperManager:
+        return self._paper
 
     # --- live feed ---------------------------------------------------------
     def live(self) -> LiveFeed | None:
@@ -42,6 +48,8 @@ class AppState:
     def set_live(self, feed: LiveFeed | None) -> None:
         with self._lock:
             self._live = feed
+        if feed is not None:
+            feed._paper_manager = self._paper
 
     def _load_if_exists(self) -> None:
         if self.report_path.exists():

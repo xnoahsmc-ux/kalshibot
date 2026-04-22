@@ -233,6 +233,85 @@ def create_app(state: AppState | None = None) -> Flask:
     def popular_page() -> str:
         return render_template("popular.html", page="popular")
 
+    @app.route("/paperbots")
+    def paperbots_page() -> str:
+        from ..paper import PRESETS
+        return render_template("paperbots.html", page="paperbots", presets=PRESETS)
+
+    @app.route("/weather")
+    def weather_page() -> str:
+        return render_template("weather.html", page="weather")
+
+    @app.route("/api/paperbots")
+    def api_paperbots_list():
+        pm = state.paper()
+        return jsonify({"bots": [
+            {
+                "id": b.id, "name": b.name, "style": b.style,
+                "starting_cash": b.starting_cash,
+                "cash": round(b.cash, 2),
+                "open_value": round(b.open_position_value(), 2),
+                "equity": round(b.equity, 2),
+                "pnl": round(b.total_pnl, 2),
+                "pnl_pct": round(b.pnl_pct * 100, 2),
+                "wins": b.wins, "losses": b.losses,
+                "hit_rate": round(b.hit_rate * 100, 1),
+                "open_count": len(b.open_trades),
+                "closed_count": len(b.closed_trades),
+                "equity_curve": [[round(t, 0), round(e, 2)] for t, e in b.equity_history[-200:]],
+                "open_trades": [{
+                    "ticker": t.ticker, "side": t.side, "contracts": t.contracts,
+                    "entry_price": round(t.entry_price, 3),
+                    "current_price": round(t.current_price, 3),
+                    "unrealized_pnl": round(t.unrealized_pnl, 2),
+                } for t in list(b.open_trades.values())[-20:]],
+            } for b in pm.bots()
+        ]})
+
+    @app.route("/api/paperbots/create", methods=["POST"])
+    def api_paperbots_create():
+        from ..paper import PRESETS
+        pm = state.paper()
+        payload = request.get_json(silent=True) or {}
+        style = payload.get("style", "balanced")
+        if style not in PRESETS:
+            return jsonify({"ok": False, "error": f"Unknown style {style}"}), 400
+        try:
+            bankroll = float(payload.get("bankroll", 100))
+        except (TypeError, ValueError):
+            bankroll = 100.0
+        name = payload.get("name") or PRESETS[style]["label"]
+        bot = pm.add(name=name, style=style, bankroll=bankroll)
+        return jsonify({"ok": True, "id": bot.id})
+
+    @app.route("/api/paperbots/<bot_id>", methods=["DELETE"])
+    def api_paperbots_delete(bot_id: str):
+        state.paper().remove(bot_id)
+        return jsonify({"ok": True})
+
+    @app.route("/api/paperbots/reset", methods=["POST"])
+    def api_paperbots_reset():
+        state.paper().reset_all()
+        state.paper().seed_defaults()
+        return jsonify({"ok": True})
+
+    @app.route("/api/weather")
+    def api_weather():
+        from ..external_data import NWSClient
+        nws = NWSClient()
+        out = []
+        for cf in nws.forecast_all():
+            out.append({
+                "code": cf.code, "name": cf.name,
+                "lat": cf.lat, "lon": cf.lon,
+                "today_high": cf.today_high, "today_low": cf.today_low,
+                "today_summary": cf.today_summary,
+                "tomorrow_high": cf.tomorrow_high,
+                "tomorrow_low": cf.tomorrow_low,
+                "updated_at": cf.updated_at,
+            })
+        return jsonify({"cities": out})
+
     @app.route("/live")
     def live_page() -> str:
         r = state.report

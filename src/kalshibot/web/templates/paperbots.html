@@ -1,0 +1,194 @@
+{% extends "base.html" %}
+{% block title %}Paper bots · Kalshi Bot{% endblock %}
+{% block main %}
+
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Paper bots</h1>
+    <p class="page-sub">Multiple bots race each other on real Kalshi signals with simulated money. Who'll come out on top?</p>
+  </div>
+  <div class="row">
+    <button id="resetBtn" class="btn-ghost">Reset all</button>
+  </div>
+</div>
+
+<div class="grid-4" style="margin-bottom:24px;">
+  <div class="kpi" id="kpiBots"><div class="label">Active bots</div><div class="value">0</div><div class="sub">racing live</div></div>
+  <div class="kpi" id="kpiLeader"><div class="label">Leader</div><div class="value">—</div><div class="sub">by total PnL</div></div>
+  <div class="kpi" id="kpiTopPnl"><div class="label">Top PnL</div><div class="value">$0.00</div><div class="sub">simulated</div></div>
+  <div class="kpi" id="kpiTotal"><div class="label">Total bets placed</div><div class="value">0</div><div class="sub">across all bots</div></div>
+</div>
+
+<h2>Add a new bot</h2>
+<div class="grid-3">
+  {% for key, preset in presets.items() %}
+  <div class="card" style="padding:16px;">
+    <div class="row" style="gap:10px; align-items:center;">
+      <div style="font-size:30px;">{{ preset.emoji }}</div>
+      <div>
+        <div style="font-weight:800; font-size:15px;">{{ preset.label }}</div>
+        <div class="dim" style="font-size:12px;">{{ preset.blurb }}</div>
+      </div>
+    </div>
+    <div style="display:flex; gap:8px; margin-top:12px;">
+      <input type="number" value="100" min="10" step="10" id="br-{{ key }}" style="width:100px;" />
+      <button data-style="{{ key }}" class="btn add-btn" style="flex:1;">Spawn</button>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<div class="spacer"></div>
+
+<h2>Leaderboard</h2>
+<div class="tablewrap">
+  <table>
+    <thead><tr>
+      <th>Rank</th>
+      <th>Bot</th>
+      <th>Style</th>
+      <th class="num">Bankroll</th>
+      <th class="num">Cash</th>
+      <th class="num">Open value</th>
+      <th class="num">Equity</th>
+      <th class="num">PnL</th>
+      <th class="num">PnL %</th>
+      <th class="num">W/L</th>
+      <th class="num">Hit rate</th>
+      <th class="num">Open</th>
+      <th></th>
+    </tr></thead>
+    <tbody id="leaderboard"><tr><td colspan="13" class="dim" style="text-align:center; padding:40px;">Loading…</td></tr></tbody>
+  </table>
+</div>
+
+<div class="spacer"></div>
+<div class="card">
+  <div class="card-head"><div><div class="card-title">Equity race</div>
+    <div class="card-sub">Simulated dollars over time, every bot</div></div></div>
+  <div class="chart-wrap big"><canvas id="equity"></canvas></div>
+</div>
+
+<div class="spacer"></div>
+<div class="grid-2">
+  <div class="card">
+    <div class="card-head"><div><div class="card-title">How this works</div></div></div>
+    <p class="dim" style="font-size:13px; line-height:1.7;">
+      Each bot watches the live signal stream. When a signal matches its
+      confidence and edge thresholds, it "opens" a simulated position at the
+      current ask/bid price. All positions are marked to market every poll.
+      When a market is about to close (< 5 min to close) the bot settles at
+      the last known mid and the realized PnL is added to its cash.
+    </p>
+  </div>
+  <div class="card">
+    <div class="card-head"><div><div class="card-title">Tips</div></div></div>
+    <ul class="dim" style="font-size:13px; line-height:1.7; padding-left:20px;">
+      <li>Make sure the live feed is running - without it no signals reach the bots.</li>
+      <li>The bots only trade tickers where the recommendation isn't "flat".</li>
+      <li>Whichever bot style is winning by end of day is the profile to use live.</li>
+    </ul>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const palette = ['#38bdf8','#22c55e','#f59e0b','#a855f7','#ec4899','#06b6d4','#eab308','#f97316'];
+let equityChart = null;
+
+async function refresh() {
+  try {
+    const d = await KB.fetchJSON('/api/paperbots');
+    const bots = d.bots || [];
+    bots.sort((a,b) => b.equity - a.equity);
+
+    document.getElementById('kpiBots').innerHTML =
+      `<div class="label">Active bots</div><div class="value">${bots.length}</div><div class="sub">racing live</div>`;
+    const leader = bots[0];
+    document.getElementById('kpiLeader').innerHTML =
+      `<div class="label">Leader</div><div class="value" style="font-size:20px;">${leader ? leader.name : '—'}</div><div class="sub">by equity</div>`;
+    const topPnl = leader ? leader.pnl : 0;
+    document.getElementById('kpiTopPnl').innerHTML =
+      `<div class="label">Top PnL</div><div class="value ${topPnl>=0?'good':'bad'}">${topPnl>=0?'+':''}$${topPnl.toFixed(2)}</div><div class="sub">simulated</div>`;
+    const total = bots.reduce((a,b) => a + b.open_count + b.closed_count, 0);
+    document.getElementById('kpiTotal').innerHTML =
+      `<div class="label">Total bets placed</div><div class="value">${total}</div><div class="sub">across all bots</div>`;
+
+    const body = document.getElementById('leaderboard');
+    if (!bots.length) {
+      body.innerHTML = '<tr><td colspan="13" class="dim" style="text-align:center; padding:40px;">No bots yet. Spawn one above.</td></tr>';
+    } else {
+      body.innerHTML = bots.map((b, i) => {
+        const pnlCls = b.pnl >= 0 ? 'pos' : 'neg';
+        const pctCls = b.pnl_pct >= 0 ? 'pos' : 'neg';
+        const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `#${i+1}`;
+        return `<tr>
+          <td>${medal}</td>
+          <td><div style="font-weight:700;">${b.name}</div></td>
+          <td><span class="pill">${b.style}</span></td>
+          <td class="num">$${b.starting_cash.toFixed(0)}</td>
+          <td class="num">$${b.cash.toFixed(2)}</td>
+          <td class="num">$${b.open_value.toFixed(2)}</td>
+          <td class="num" style="font-weight:700;">$${b.equity.toFixed(2)}</td>
+          <td class="num ${pnlCls}">${b.pnl>=0?'+':''}$${b.pnl.toFixed(2)}</td>
+          <td class="num ${pctCls}">${b.pnl_pct>=0?'+':''}${b.pnl_pct.toFixed(2)}%</td>
+          <td class="num">${b.wins}/${b.losses}</td>
+          <td class="num">${b.hit_rate.toFixed(0)}%</td>
+          <td class="num">${b.open_count}</td>
+          <td><button class="btn-ghost" data-del="${b.id}" style="padding:4px 10px;">×</button></td>
+        </tr>`;
+      }).join('');
+      body.querySelectorAll('[data-del]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          await fetch('/api/paperbots/' + btn.dataset.del, { method: 'DELETE' });
+          refresh();
+        });
+      });
+    }
+
+    // Equity race chart
+    const datasets = bots.map((b, i) => ({
+      label: b.name,
+      data: b.equity_curve.map(([t, e]) => ({ x: new Date(t*1000), y: e })),
+      borderColor: palette[i % palette.length],
+      backgroundColor: palette[i % palette.length] + '22',
+      pointRadius: 0, tension: 0.2, borderWidth: 1.8, fill: false,
+    }));
+    if (equityChart) equityChart.destroy();
+    equityChart = new Chart(document.getElementById('equity'), {
+      type: 'line',
+      data: { datasets },
+      options: {
+        maintainAspectRatio: false,
+        scales: { x: { type: 'category', display: false } },
+        plugins: { legend: { position: 'right' } }
+      }
+    });
+  } catch(e){}
+  setTimeout(refresh, 4000);
+}
+
+document.querySelectorAll('.add-btn').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const style = btn.dataset.style;
+    const bankroll = parseFloat(document.getElementById('br-' + style).value) || 100;
+    await fetch('/api/paperbots/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ style, bankroll })
+    });
+    refresh();
+  });
+});
+
+document.getElementById('resetBtn').addEventListener('click', async () => {
+  if (!confirm('Reset all bots back to starting bankroll?')) return;
+  await fetch('/api/paperbots/reset', { method: 'POST' });
+  refresh();
+});
+
+refresh();
+</script>
+{% endblock %}

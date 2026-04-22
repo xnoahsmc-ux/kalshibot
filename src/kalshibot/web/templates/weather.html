@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block title %}Weather map · Kalshi Bot{% endblock %}
+{% block main %}
+
+<div class="page-head">
+  <div>
+    <h1 class="page-title">US weather map</h1>
+    <p class="page-sub">Live forecasts from the National Weather Service (api.weather.gov). Used to model weather markets.</p>
+  </div>
+  <div class="row">
+    <span class="pill">NWS data · government source</span>
+  </div>
+</div>
+
+<div class="card" style="padding: 18px;">
+  <div style="position: relative;">
+    <svg id="usmap" viewBox="0 0 1000 550" style="width:100%; height:auto; background:#0a0f1c; border-radius: 10px;">
+      <!-- Simplified US outline (lower 48). Approximate but recognizable. -->
+      <path d="
+        M 165,170 L 205,155 L 245,140 L 295,130 L 340,125 L 380,125 L 420,130
+        L 460,138 L 510,140 L 560,140 L 610,140 L 660,142 L 710,150 L 750,160
+        L 790,175 L 820,195 L 830,220 L 845,250 L 870,280 L 890,310 L 900,340
+        L 895,370 L 880,395 L 865,415 L 840,430 L 805,445 L 760,455 L 710,460
+        L 660,455 L 610,455 L 555,450 L 500,445 L 445,440 L 390,435 L 335,430
+        L 285,415 L 240,395 L 200,370 L 175,340 L 160,305 L 155,270 L 155,230
+        L 160,195 Z"
+        fill="#11182f" stroke="#2d3b5e" stroke-width="1.5"/>
+      <!-- Some extra strokes for Florida + Texas so map reads better -->
+      <path d="M 760,380 Q 780,410 790,445" fill="none" stroke="#2d3b5e" stroke-width="1"/>
+      <path d="M 500,420 Q 510,460 520,480 L 490,485 L 480,460 Z"
+            fill="#11182f" stroke="#2d3b5e" stroke-width="1"/>
+      <g id="cities"></g>
+    </svg>
+  </div>
+</div>
+
+<div class="spacer"></div>
+<div id="cardgrid" class="grid-4"></div>
+
+<div class="spacer"></div>
+<div class="card">
+  <div class="card-head"><div><div class="card-title">How this helps the bot</div></div></div>
+  <p class="dim" style="font-size:13px; line-height:1.7;">
+    For any Kalshi weather market (e.g.
+    <code>KXHIGHLAX-26APR22-T72</code> "Will LA high be above 72°F?"),
+    we pull the NWS forecast high for that city and compute
+    P(actual &gt; 72°F) using a 3°F standard deviation.
+    That probability is blended with the technical ensemble's view, giving
+    significantly more accurate calls on weather markets than pure price
+    action alone.
+  </p>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Project lat/lon onto the 1000x550 viewBox. Bounds chosen to fit the
+// contiguous US plus Florida's panhandle.
+function project(lat, lon) {
+  const minLon = -125, maxLon = -66;
+  const minLat = 24,   maxLat = 50;
+  const x = (lon - minLon) / (maxLon - minLon) * 1000;
+  const y = (maxLat - lat) / (maxLat - minLat) * 550;
+  return [x, y];
+}
+
+function tempColor(t) {
+  if (t == null) return '#64748b';
+  if (t <= 20) return '#7dd3fc';
+  if (t <= 40) return '#38bdf8';
+  if (t <= 55) return '#22d3ee';
+  if (t <= 70) return '#22c55e';
+  if (t <= 85) return '#f59e0b';
+  if (t <= 95) return '#f97316';
+  return '#ef4444';
+}
+
+async function load() {
+  try {
+    const d = await KB.fetchJSON('/api/weather');
+    const cities = d.cities || [];
+    const svg = document.getElementById('cities');
+    svg.innerHTML = cities.map(c => {
+      const [x, y] = project(c.lat, c.lon);
+      const hi = c.today_high;
+      const color = tempColor(hi);
+      return `
+        <g transform="translate(${x},${y})">
+          <circle r="22" fill="${color}" fill-opacity="0.18" stroke="${color}" stroke-width="1.8"/>
+          <circle r="6" fill="${color}"/>
+          <text y="-28" text-anchor="middle" fill="#f1f5ff" font-size="14" font-weight="700">${hi != null ? hi + '°' : '—'}</text>
+          <text y="34" text-anchor="middle" fill="#98a3c0" font-size="11" font-weight="600">${c.name}</text>
+        </g>`;
+    }).join('');
+
+    const grid = document.getElementById('cardgrid');
+    grid.innerHTML = cities.map(c => {
+      const color = tempColor(c.today_high);
+      return `
+        <div class="card" style="padding:16px;">
+          <div class="row" style="justify-content:space-between; margin-bottom:4px;">
+            <div style="font-weight:700; font-size:14px;">${c.name}</div>
+            <span class="mono dim" style="font-size:11px;">${c.code}</span>
+          </div>
+          <div style="display:flex; align-items:baseline; gap:10px;">
+            <div style="font-size:36px; font-weight:800; color:${color}; letter-spacing:-0.03em; font-variant-numeric:tabular-nums;">
+              ${c.today_high != null ? c.today_high + '°' : '—'}
+            </div>
+            <div class="dim" style="font-size:12px;">
+              high · low ${c.today_low != null ? c.today_low + '°' : '—'}
+            </div>
+          </div>
+          <div class="dim" style="font-size:12px; margin-top:4px;">${c.today_summary || ''}</div>
+          <div class="hint" style="margin-top:10px; border-top:1px solid var(--border); padding-top:8px;">
+            Tomorrow ${c.tomorrow_high != null ? c.tomorrow_high + '°' : '—'}
+            / ${c.tomorrow_low != null ? c.tomorrow_low + '°' : '—'}
+          </div>
+        </div>`;
+    }).join('');
+  } catch (e) {}
+  setTimeout(load, 60000);  // refresh every minute
+}
+load();
+</script>
+{% endblock %}
