@@ -121,15 +121,36 @@ class LiveFeed:
             self._stop.wait(max(5, self.cfg.poll_seconds))
 
     def _poll_once(self) -> None:
-        # Pull a bigger candidate pool so the most-traded markets surface,
-        # then keep only the ones with any liquidity signal.
+        # Two sources: (1) known-popular series (guaranteed active markets),
+        # (2) top of the generic /markets feed ranked by liquidity.
         from .history_fetch import liquidity_score, rank_markets
-        page = self.client.get_markets(limit=max(200, self.max_markets * 4),
-                                         status="open")
-        all_markets = page.get("markets", []) if isinstance(page, dict) else []
+        from .popular_series import POPULAR_SERIES
+        all_markets: list[dict] = []
+        seen = set()
+        # Try popular series first - these are tight, actively-traded markets.
+        for series in POPULAR_SERIES:
+            try:
+                page = self.client.get_markets(limit=20, status="open",
+                                                series_ticker=series)
+                for m in page.get("markets", []) if isinstance(page, dict) else []:
+                    tk = m.get("ticker")
+                    if tk and tk not in seen:
+                        seen.add(tk)
+                        all_markets.append(m)
+            except Exception:
+                # Some series in our list may not exist in every account — ignore
+                continue
+        # Then the generic firehose, to catch anything not in the popular list.
+        try:
+            page = self.client.get_markets(limit=200, status="open")
+            for m in page.get("markets", []) if isinstance(page, dict) else []:
+                tk = m.get("ticker")
+                if tk and tk not in seen:
+                    seen.add(tk)
+                    all_markets.append(m)
+        except Exception as e:
+            self._status.last_error = f"markets fetch: {e}"
         self._status.authed = True
-        # Rank by liquidity and keep the top N - otherwise Kalshi's default
-        # ordering buries real markets behind hundreds of empty baskets.
         ranked = rank_markets(all_markets)
         tradeable = [m for m in ranked if liquidity_score(m) > 0]
         chosen = (tradeable or ranked)[: self.max_markets]

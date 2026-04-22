@@ -106,37 +106,76 @@ def fetch_history(
     return MarketHistory(ticker=ticker, df=df)
 
 
-def fetch_open_markets(client: KalshiClient, limit: int = 500) -> list[dict]:
-    """List current open markets, paginated as needed. Caller can filter/sort."""
+def fetch_open_markets(client: KalshiClient, limit: int = 500,
+                        include_popular: bool = True) -> list[dict]:
+    """List current open markets, seeding from a curated list of popular
+    series so we don't get buried under Kalshi's auto-generated baskets.
+    """
     out: list[dict] = []
+    seen: set[str] = set()
+
+    if include_popular:
+        try:
+            from .popular_series import POPULAR_SERIES
+        except ImportError:
+            POPULAR_SERIES = []
+        for series in POPULAR_SERIES:
+            if len(out) >= limit:
+                break
+            try:
+                page = client.get_markets(limit=20, status="open",
+                                           series_ticker=series)
+                for m in page.get("markets", []) if isinstance(page, dict) else []:
+                    tk = m.get("ticker")
+                    if tk and tk not in seen:
+                        seen.add(tk)
+                        out.append(m)
+            except Exception:
+                continue
+
     cursor = None
     while len(out) < limit:
         page = client.get_markets(limit=min(200, limit - len(out)),
                                   status="open", cursor=cursor)
         markets = page.get("markets", []) if isinstance(page, dict) else []
-        out.extend(markets)
+        for m in markets:
+            tk = m.get("ticker")
+            if tk and tk not in seen:
+                seen.add(tk)
+                out.append(m)
         cursor = page.get("cursor")
         if not cursor or not markets:
             break
     return out[:limit]
 
 
+def _float_field(m: dict, *keys: str) -> float:
+    for k in keys:
+        v = m.get(k)
+        if v is not None:
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                pass
+    return 0.0
+
+
 def liquidity_score(m: dict) -> int:
-    """Catch-all liquidity proxy. Combines every field Kalshi might publish
-    that hints the market has been traded on. We check a bunch of variants
-    because the exact schema has drifted between API versions.
+    """Catch-all liquidity proxy. Handles both legacy integer fields and
+    the newer `_fp` floating-point fields Kalshi added.
     """
-    score = 0
-    score += _int_field(m, "volume_24h", "volume24h", "volume24H", "recent_volume") * 10
-    score += _int_field(m, "open_interest", "openInterest")
-    score += _int_field(m, "volume") // 10
-    score += _int_field(m, "liquidity", "liquidity_cents") // 100
-    # Presence of a last price / bid-ask is itself a signal the market trades.
-    if m.get("last_price") not in (None, 0):
+    score = 0.0
+    score += _float_field(m, "volume_24h_fp", "volume24h_fp",
+                           "volume_24h", "volume24h") * 10
+    score += _float_field(m, "open_interest_fp", "open_interest", "openInterest")
+    score += _float_field(m, "volume_fp", "volume") / 10
+    score += _float_field(m, "liquidity_fp", "liquidity", "liquidity_cents") / 100
+    if m.get("last_price_dollars") or m.get("last_price"):
         score += 5
-    if m.get("yes_bid") and m.get("yes_ask"):
+    if (m.get("yes_bid") or m.get("yes_bid_dollars")) and \
+       (m.get("yes_ask") or m.get("yes_ask_dollars")):
         score += 3
-    return score
+    return int(score)
 
 
 def rank_markets(markets: list[dict]) -> list[dict]:
@@ -204,23 +243,28 @@ def fetch_universe(
             if verbose:
                 print(f"  [skip] {t}: no series_ticker resolved")
             continue
-        try:
-            h = fetch_history(client, series_ticker=series, ticker=t,
-                              lookback_hours=lookback_hours,
-                              period_minutes=period_minutes)
-            if len(h.df) >= min_bars:
-                histories.append(h)
+        h = MarketHistory(ticker=t)
+        # Try hourly first; fall back to daily for markets that update slowly.
+        for pm, lbh in ((period_minutes, lookback_hours),
+                         (1440, max(lookback_hours, 24 * 30))):
+            try:
+                h = fetch_history(client, series_ticker=series, ticker=t,
+                                  lookback_hours=lbh, period_minutes=pm)
+                if len(h.df) >= min_bars:
+                    break
+            except KalshiAPIError as e:
                 if verbose:
-                    print(f"  [ok]   {t}: {len(h.df)} bars (series={series})")
-            else:
+                    print(f"  [retry] {t}: period={pm} -> {e.status} {e.body[:80]}")
+            except Exception as e:
                 if verbose:
-                    print(f"  [skip] {t}: only {len(h.df)} bars (series={series})")
-        except KalshiAPIError as e:
+                    print(f"  [retry] {t}: period={pm} -> {type(e).__name__}: {e}")
+        if len(h.df) >= min_bars:
+            histories.append(h)
             if verbose:
-                print(f"  [skip] {t}: {e.status} {e.body[:120]}")
-        except Exception as e:
+                print(f"  [ok]   {t}: {len(h.df)} bars (series={series})")
+        else:
             if verbose:
-                print(f"  [skip] {t}: {type(e).__name__}: {e}")
+                print(f"  [skip] {t}: {len(h.df)} bars after fallback (series={series})")
     if verbose:
         print(f"[fetch-history] kept {len(histories)} usable histories "
               f"after {attempts} attempts")

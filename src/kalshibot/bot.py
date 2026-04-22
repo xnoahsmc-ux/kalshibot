@@ -27,15 +27,49 @@ def cents_to_p(c: float) -> float:
     return max(0.01, min(0.99, float(c) / 100.0))
 
 
+def _extract_price(m: dict, cents_key: str, dollars_key: str,
+                    fallback: float = 0.5) -> float:
+    """Kalshi's newer responses use e.g. `yes_bid_dollars` (0.01-0.99) while
+    older ones use `yes_bid` (1-99 cents). Handle both and clip to [0.01, 0.99]."""
+    if dollars_key in m and m[dollars_key] is not None:
+        try:
+            return max(0.01, min(0.99, float(m[dollars_key])))
+        except (TypeError, ValueError):
+            pass
+    if cents_key in m and m[cents_key] is not None:
+        try:
+            return cents_to_p(float(m[cents_key]))
+        except (TypeError, ValueError):
+            pass
+    return fallback
+
+
+def _extract_volume(m: dict) -> float:
+    for k in ("volume_fp", "volume24h_fp", "volume_24h_fp",
+              "volume", "volume_24h", "volume24h"):
+        v = m.get(k)
+        if v is not None:
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                pass
+    return 0.0
+
+
 def snapshot_from_market(m: dict, ts: pd.Timestamp) -> MarketSnapshot:
+    yes_bid = _extract_price(m, "yes_bid", "yes_bid_dollars", 0.5)
+    yes_ask = _extract_price(m, "yes_ask", "yes_ask_dollars",
+                              min(0.99, yes_bid + 0.02))
+    last = _extract_price(m, "last_price", "last_price_dollars",
+                           0.5 * (yes_bid + yes_ask))
     return MarketSnapshot(
         ticker=m["ticker"],
         ts=ts,
-        yes_bid=cents_to_p(m.get("yes_bid", 50)),
-        yes_ask=cents_to_p(m.get("yes_ask", 50)),
-        last=cents_to_p(m.get("last_price", m.get("yes_bid", 50))),
-        volume=float(m.get("volume", 0)),
-        open_interest=float(m.get("open_interest", 0)),
+        yes_bid=yes_bid,
+        yes_ask=yes_ask,
+        last=last,
+        volume=_extract_volume(m),
+        open_interest=float(m.get("open_interest") or m.get("open_interest_fp") or 0),
         minutes_to_close=_minutes_to_close(m),
     )
 
