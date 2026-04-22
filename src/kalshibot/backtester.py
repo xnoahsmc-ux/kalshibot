@@ -5,6 +5,11 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from .cross_sectional import (
+    cross_sectional_momentum,
+    cross_sectional_reversion,
+    pairs_mean_reversion,
+)
 from .data import MarketHistory
 from .strategies.registry import Strat
 
@@ -62,17 +67,63 @@ def evaluate_strategy(
     return StrategyEval(strat.name, probs, pnl, sharpe, hit, ll, edge)
 
 
+def _eval_from_probs(name: str, probs_per_ticker: dict[str, pd.Series],
+                     histories: list[MarketHistory], threshold: float,
+                     fee_bps: float) -> list[StrategyEval]:
+    """Evaluate a synthetic strategy whose probabilities come from a
+    cross-sectional signal (one series per market)."""
+    evals: list[StrategyEval] = []
+    for h in histories:
+        probs = probs_per_ticker.get(h.ticker)
+        if probs is None:
+            probs = pd.Series(0.5, index=h.df.index)
+        probs = probs.reindex(h.df.index).ffill().fillna(0.5).clip(0.01, 0.99)
+        mid = h.mid
+        pos = _signed_position(probs, mid, threshold)
+        pnl = _bar_pnl(pos, mid, fee_bps)
+        terminal = float(mid.iloc[-1])
+        y = 1.0 if terminal >= 0.5 else 0.0
+        p_clip = probs.clip(1e-3, 1 - 1e-3)
+        ll = float(-(y * np.log(p_clip) + (1 - y) * np.log(1 - p_clip)).mean())
+        sd = float(pnl.std())
+        sharpe = float(pnl.mean() / sd * np.sqrt(252 * 390)) if sd > 0 else 0.0
+        hit = float((np.sign(pnl) > 0).mean())
+        edge = float((probs - mid).abs().mean())
+        evals.append(StrategyEval(name, probs, pnl, sharpe, hit, ll, edge))
+    return evals
+
+
 def evaluate_all(
     strats: list[Strat],
     histories: list[MarketHistory],
     threshold: float = 0.02,
     fee_bps: float = 5.0,
+    include_cross_sectional: bool = True,
 ) -> dict[str, list[StrategyEval]]:
-    """Evaluate each strategy across every market. Indexed by strategy name."""
+    """Evaluate each strategy across every market. Indexed by strategy name.
+
+    Cross-sectional signals (momentum, reversion, pairs) are appended as
+    synthetic strategies so the combiner can weight them alongside the
+    per-market ones.
+    """
     out: dict[str, list[StrategyEval]] = {s.name: [] for s in strats}
     for h in histories:
         for s in strats:
             out[s.name].append(evaluate_strategy(s, h, threshold, fee_bps))
+
+    if include_cross_sectional and len(histories) >= 2:
+        xs_families = [
+            ("xs_mom_10", cross_sectional_momentum(histories, lookback=10)),
+            ("xs_mom_30", cross_sectional_momentum(histories, lookback=30)),
+            ("xs_mom_60", cross_sectional_momentum(histories, lookback=60)),
+            ("xs_rev_10", cross_sectional_reversion(histories, lookback=10)),
+            ("xs_rev_30", cross_sectional_reversion(histories, lookback=30)),
+            ("xs_pairs_30", pairs_mean_reversion(histories, n=30)),
+            ("xs_pairs_60", pairs_mean_reversion(histories, n=60)),
+        ]
+        for name, probs in xs_families:
+            out[name] = _eval_from_probs(name, probs, histories, threshold, fee_bps)
+
     return out
 
 

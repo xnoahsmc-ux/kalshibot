@@ -45,6 +45,11 @@
 
 <div class="spacer"></div>
 
+<h2>Genre performance</h2>
+<div id="genre_tiles" class="grid-3"></div>
+
+<div class="spacer"></div>
+
 <div class="grid-2">
   <div class="card">
     <div class="card-head">
@@ -132,6 +137,40 @@
     data: { labels: gLabels, datasets: gNames.map((n, i) =>
       ({ ...KB.lineDataset(n, genreEq[n], KB.palette[i % KB.palette.length], 1), fill: false })) },
     options: { maintainAspectRatio: false, plugins: { legend: { display: gNames.length <= 10 } } }
+  });
+
+  // Build genre tiles (mini sparklines)
+  const tiles = document.getElementById('genre_tiles');
+  tiles.innerHTML = '';
+  genres.labels.forEach((g, i) => {
+    const tot = genres.totals[i], sh = genres.sharpes[i];
+    const totCls = tot >= 0 ? 'pos' : 'neg';
+    const shCls  = sh  >= 0 ? 'pos' : 'neg';
+    const id = 'spark_' + i;
+    tiles.insertAdjacentHTML('beforeend', `
+      <div class="card" style="padding:14px;">
+        <div class="row" style="justify-content:space-between; margin-bottom:6px;">
+          <span class="pill">${g}</span>
+          <span class="${totCls}" style="font-weight:700;">${KB.fmt.money(tot)}</span>
+        </div>
+        <div class="dim" style="font-size:12px; margin-bottom:8px;">Sharpe
+          <span class="${shCls}" style="font-weight:600;">${KB.fmt.num2(sh)}</span></div>
+        <div style="height:40px;"><canvas id="${id}"></canvas></div>
+      </div>`);
+    const ge = genreEq[g];
+    if (ge) {
+      new Chart(document.getElementById(id), {
+        type: 'line',
+        data: { labels: ge.x, datasets: [{
+          data: ge.y, borderColor: tot >= 0 ? '#34d399' : '#f87171',
+          backgroundColor: tot >= 0 ? 'rgba(52,211,153,.15)' : 'rgba(248,113,113,.15)',
+          pointRadius: 0, tension: 0.2, fill: true, borderWidth: 1.5
+        }] },
+        options: { maintainAspectRatio: false, responsive: true,
+          plugins: { legend: { display: false }, tooltip: { enabled: false } },
+          scales: { x: { display: false }, y: { display: false } } }
+      });
+    }
   });
 
   // Genre bars

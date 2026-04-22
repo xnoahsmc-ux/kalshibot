@@ -14,7 +14,7 @@ def _universe():
 def test_backtest_produces_pnl_and_probs():
     strats = all_strategies()[:25]
     universe = _universe()
-    evals = evaluate_all(strats, universe)
+    evals = evaluate_all(strats, universe, include_cross_sectional=False)
     p = stack_pnls(evals)
     q = stack_probs(evals)
     assert p.shape[1] == len(strats)
@@ -24,7 +24,7 @@ def test_backtest_produces_pnl_and_probs():
 
 def test_combiner_returns_simplex_weights():
     strats = all_strategies()[:25]
-    evals = evaluate_all(strats, _universe())
+    evals = evaluate_all(strats, _universe(), include_cross_sectional=False)
     p = stack_pnls(evals)
     combo = best_combination(p, top_k=10)
     assert abs(combo.weights.sum() - 1.0) < 1e-6

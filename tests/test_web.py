@@ -27,7 +27,8 @@ def test_pages_render(tmp_path):
     state = _seed_state(tmp_path)
     app = create_app(state)
     client = app.test_client()
-    for path in ["/", "/strategies", "/genres", "/markets", "/ensemble", "/backtest"]:
+    for path in ["/", "/strategies", "/genres", "/markets", "/ensemble",
+                 "/reliability", "/backtest"]:
         r = client.get(path)
         assert r.status_code == 200, (path, r.status_code)
         assert b"kalshibot" in r.data
@@ -42,10 +43,22 @@ def test_apis_return_json(tmp_path):
     j = r.get_json()
     assert j["has_report"] is True
     assert j["n_markets"] == 4
-    for p in ["/api/equity", "/api/weights", "/api/genres", "/api/genre_equity"]:
+    for p in ["/api/equity", "/api/weights", "/api/genres", "/api/genre_equity",
+              "/api/reliability", "/api/walkforward"]:
         rr = client.get(p)
         assert rr.status_code == 200
         assert rr.get_json() is not None
+
+
+def test_csv_exports(tmp_path):
+    state = _seed_state(tmp_path)
+    app = create_app(state)
+    client = app.test_client()
+    for kind in ["strategies", "genres", "markets", "weights"]:
+        r = client.get(f"/export/{kind}.csv")
+        assert r.status_code == 200
+        assert r.mimetype == "text/csv"
+        assert b"," in r.data
 
 
 def test_empty_state_renders(tmp_path):

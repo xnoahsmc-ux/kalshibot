@@ -143,6 +143,54 @@ def create_app(state: AppState | None = None) -> Flask:
             "sharpes": [float(v) for v in r.per_genre["sharpe"].values],
         })
 
+    @app.route("/api/reliability")
+    def api_reliability():
+        r = state.report
+        if r is None:
+            return jsonify({"bins": []})
+        # Build a reliability curve from the ensemble blended probabilities vs
+        # terminal outcomes of each market. We approximate with the per-market
+        # average probability and the terminal outcome.
+        from .calibration_api import reliability_from_report  # lazy
+        bins = reliability_from_report(r)
+        return jsonify({"bins": bins})
+
+    @app.route("/api/walkforward")
+    def api_walkforward():
+        r = state.report
+        if r is None:
+            return jsonify({"oos_sharpe": None})
+        return jsonify({
+            "oos_sharpe": float(r.per_genre.attrs.get("oos_sharpe"))
+                          if r.per_genre.attrs.get("oos_sharpe") is not None else None,
+        })
+
+    @app.route("/export/<kind>.csv")
+    def export_csv(kind: str):
+        r = state.report
+        if r is None:
+            return Response("no report", status=404)
+        if kind == "strategies":
+            df = r.per_strategy.reset_index()
+        elif kind == "genres":
+            df = r.per_genre.reset_index()
+        elif kind == "markets":
+            df = r.per_market.reset_index()
+        elif kind == "weights":
+            df = r.combo.weights.sort_values(ascending=False).to_frame("weight").reset_index()
+            df.columns = ["strategy", "weight"]
+        else:
+            return Response("unknown export", status=404)
+        return Response(df.to_csv(index=False),
+                        mimetype="text/csv",
+                        headers={"Content-Disposition": f"attachment; filename={kind}.csv"})
+
+    @app.route("/reliability")
+    def reliability_page() -> str:
+        r = state.report
+        return render_template("reliability.html", page="reliability",
+                               has_report=r is not None)
+
     @app.route("/api/job/<jid>")
     def api_job(jid: str):
         j = state.job(jid)
