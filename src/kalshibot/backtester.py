@@ -131,14 +131,22 @@ def stack_pnls(evals: dict[str, list[StrategyEval]]) -> pd.DataFrame:
     """Stack per-strategy PnL into a single matrix (rows=time across markets)."""
     cols = {}
     for name, runs in evals.items():
+        if not runs:
+            continue
         pnl = pd.concat([r.pnl.reset_index(drop=True) for r in runs], ignore_index=True)
         cols[name] = pnl
+    if not cols:
+        return pd.DataFrame()
     return pd.DataFrame(cols).fillna(0.0)
 
 
 def stack_probs(evals: dict[str, list[StrategyEval]]) -> pd.DataFrame:
     cols = {}
     for name, runs in evals.items():
+        if not runs:
+            continue
         p = pd.concat([r.probs.reset_index(drop=True) for r in runs], ignore_index=True)
         cols[name] = p
+    if not cols:
+        return pd.DataFrame()
     return pd.DataFrame(cols).fillna(0.5)

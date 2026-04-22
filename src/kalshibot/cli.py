@@ -217,10 +217,16 @@ def backtest_live_cmd(
         raise typer.Exit(1)
     universe = pickle.loads(universe_path.read_bytes())
     console.print(f"[cyan]Loaded {len(universe)} real markets[/cyan]")
+    if not universe:
+        console.print("[red]Universe is empty - nothing to backtest.[/red]")
+        raise typer.Exit(1)
     strats = all_strategies()
     evals = evaluate_all(strats, universe)
     pnl = stack_pnls(evals)
     probs = stack_probs(evals)
+    if pnl.empty or probs.empty:
+        console.print("[red]Strategies produced no evaluations - skipping.[/red]")
+        raise typer.Exit(1)
     outcomes_bars = []
     for h in universe:
         if len(h.df) == 0:
@@ -235,6 +241,92 @@ def backtest_live_cmd(
     console.print(f"[green]Ensemble Sharpe: {combo.sharpe:+.2f}  "
                   f"Total PnL: {report.equity_curve.iloc[-1]:+.4f}[/green]")
     console.print("[dim]Saved to backtest_report.pkl. Start the web UI or `kalshibot run`.[/dim]")
+
+
+@app.command("setup-live")
+def setup_live_cmd(
+    markets: int = typer.Option(24, help="Markets to fetch history for"),
+    lookback_hours: int = typer.Option(72),
+    fallback_synth_markets: int = typer.Option(24,
+        help="If real data fails, synthesize this many to still build an ensemble"),
+    port: int = typer.Option(8080),
+):
+    """One command does it all: auth check -> fetch real Kalshi history ->
+    backtest -> save ensemble -> launch the web UI.
+
+    Falls back to a synthetic backtest if real data isn't available, so
+    you always end up on a working dashboard."""
+    import pickle
+    from .analytics import build_report
+    from .backtester import evaluate_all, stack_pnls, stack_probs
+    from .combiner import best_combination
+    from .history_fetch import fetch_universe
+    from .kalshi_client import KalshiClient
+    cfg = load_config()
+
+    # 1. Auth check
+    console.print("[bold cyan]1/4  Auth check[/bold cyan]")
+    client = KalshiClient(cfg)
+    try:
+        chk = client.auth_check()
+    except Exception as e:
+        console.print(f"[red]Auth check raised: {e}[/red]")
+        chk = {"public_ok": False}
+    if chk.get("public_ok"):
+        console.print(f"  [green]Public OK[/green] - {chk.get('markets_visible', '?')} market(s) visible")
+    else:
+        console.print(f"  [yellow]Public FAIL[/yellow] - {chk.get('public_error', 'unknown')}")
+    if chk.get("auth_ok"):
+        console.print(f"  [green]Auth  OK[/green] - balance={chk.get('balance')}")
+    elif chk.get("auth_error"):
+        console.print(f"  [yellow]Auth  FAIL[/yellow] - {chk['auth_error']}")
+
+    # 2. Fetch real history (best-effort)
+    console.print("[bold cyan]2/4  Fetch real Kalshi history[/bold cyan]")
+    universe = []
+    if chk.get("public_ok"):
+        try:
+            universe = fetch_universe(client, limit=markets,
+                                      lookback_hours=lookback_hours, verbose=True)
+        except Exception as e:
+            console.print(f"  [yellow]fetch raised: {e}[/yellow]")
+    else:
+        console.print("  [dim]skipped (public endpoint unreachable)[/dim]")
+
+    # 3. Backtest on real if we got enough, else synthetic
+    console.print("[bold cyan]3/4  Backtest ensemble[/bold cyan]")
+    strats = all_strategies()
+    if len(universe) >= 4:
+        console.print(f"  using {len(universe)} real markets")
+    else:
+        console.print(f"  [yellow]only {len(universe)} real markets usable - "
+                      f"falling back to {fallback_synth_markets} synthetic[/yellow]")
+        universe = _synth_universe(fallback_synth_markets)
+    evals = evaluate_all(strats, universe)
+    pnl = stack_pnls(evals)
+    probs = stack_probs(evals)
+    outcomes_bars = []
+    for h in universe:
+        if len(h.df) == 0:
+            continue
+        y = 1.0 if h.mid.iloc[-1] >= 0.5 else 0.0
+        outcomes_bars.extend([y] * len(h.df))
+    import pandas as pd
+    outcomes = pd.Series(outcomes_bars[:len(probs)])
+    combo = best_combination(pnl, probs, outcomes, top_k=30)
+    report = build_report(evals, [h.ticker for h in universe], combo)
+    Path("backtest_report.pkl").write_bytes(pickle.dumps(report))
+    console.print(f"  [green]ensemble saved[/green] - Sharpe {combo.sharpe:+.2f}, "
+                  f"{int((combo.weights > 0).sum())} active strategies")
+
+    # 4. Launch the web server
+    console.print("[bold cyan]4/4  Launching web UI[/bold cyan]")
+    from .web import create_app
+    from .web.state import AppState
+    state = AppState()
+    web_app = create_app(state)
+    console.print(f"[green]Open http://127.0.0.1:{port}  (Ctrl+C to stop)[/green]")
+    web_app.run(host="127.0.0.1", port=port, debug=False, use_reloader=False)
 
 
 @app.command()
