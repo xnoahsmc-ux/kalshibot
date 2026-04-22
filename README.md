@@ -11,28 +11,51 @@ politics, economy, crypto, equities, entertainment, science, world, culture)
 so you can see which niche the ensemble actually makes money in. Results
 render to a self-contained HTML dashboard.
 
-## Install
+## Quick start
+
+### Windows (Command Prompt / PowerShell)
+
+```cmd
+git clone https://github.com/xnoahsmc-ux/kalshibot.git
+cd kalshibot
+git checkout claude/kalshi-trading-bot-LowZW
+run.bat
+```
+
+Or step-by-step without the helper:
+
+```cmd
+python -m pip install -r requirements.txt
+python -m pip install -e .
+kalshibot web --port 8080 --auto-backtest
+```
+
+### macOS / Linux
+
+```bash
+git clone https://github.com/xnoahsmc-ux/kalshibot.git
+cd kalshibot
+git checkout claude/kalshi-trading-bot-LowZW
+./run.sh
+```
+
+Or:
 
 ```bash
 pip install -r requirements.txt
 pip install -e .
+kalshibot web --port 8080 --auto-backtest
 ```
 
-## Usage
+Then open http://127.0.0.1:8080.
+
+## Other commands
 
 ```bash
-# 1) Web dashboard - run a backtest and explore results in the browser
-kalshibot web --port 8080 --auto-backtest
-
-# 2) CLI backtest (no UI)
-kalshibot backtest --markets 32
-
-# 3) Static HTML dashboard (single self-contained file)
-kalshibot dashboard --serve
-
-# 4) Live trade loop (reads .env; defaults to dry-run = no orders sent)
-cp .env.example .env              # edit credentials
-kalshibot run
+kalshibot backtest --markets 32   # CLI backtest, print tables
+kalshibot dashboard --serve       # self-contained HTML dashboard
+cp .env.example .env              # edit credentials for live trading
+kalshibot run                     # live trade loop (dry-run by default)
 ```
 
 The web UI (`kalshibot web`) serves a Flask dashboard at

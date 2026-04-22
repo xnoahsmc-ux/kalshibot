@@ -1,3 +1,6 @@
+.installed
+backtest_report.pkl
+dashboard.html
 __pycache__/
 *.py[cod]
 *.egg-info/
