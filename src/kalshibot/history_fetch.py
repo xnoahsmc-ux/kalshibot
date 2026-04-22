@@ -121,18 +121,28 @@ def fetch_open_markets(client: KalshiClient, limit: int = 500) -> list[dict]:
     return out[:limit]
 
 
+def liquidity_score(m: dict) -> int:
+    """Catch-all liquidity proxy. Combines every field Kalshi might publish
+    that hints the market has been traded on. We check a bunch of variants
+    because the exact schema has drifted between API versions.
+    """
+    score = 0
+    score += _int_field(m, "volume_24h", "volume24h", "volume24H", "recent_volume") * 10
+    score += _int_field(m, "open_interest", "openInterest")
+    score += _int_field(m, "volume") // 10
+    score += _int_field(m, "liquidity", "liquidity_cents") // 100
+    # Presence of a last price / bid-ask is itself a signal the market trades.
+    if m.get("last_price") not in (None, 0):
+        score += 5
+    if m.get("yes_bid") and m.get("yes_ask"):
+        score += 3
+    return score
+
+
 def rank_markets(markets: list[dict]) -> list[dict]:
-    """Sort markets by best proxy for liquidity so we try the most useful
-    ones first. Kalshi returns them in no particular order otherwise."""
-    return sorted(
-        markets,
-        key=lambda m: (
-            _int_field(m, "volume_24h", "volume24h"),
-            _int_field(m, "open_interest", "openInterest"),
-            _int_field(m, "volume"),
-        ),
-        reverse=True,
-    )
+    """Sort by our composite liquidity score so the most-traded markets are
+    tried first."""
+    return sorted(markets, key=liquidity_score, reverse=True)
 
 
 def fetch_universe(
@@ -163,13 +173,25 @@ def fetch_universe(
             print(f"[fetch-history] fetched {len(markets)} open markets")
         if not markets:
             return []
-        markets = [m for m in markets
-                   if _int_field(m, "volume_24h", "volume24h") >= min_volume_24h]
-        markets = rank_markets(markets)
         if verbose:
-            print(f"[fetch-history] {len(markets)} have vol_24h>={min_volume_24h}")
-        series_map = {m["ticker"]: extract_series_ticker(m) for m in markets}
-        tickers = [m["ticker"] for m in markets]
+            sample_keys = sorted(markets[0].keys()) if markets else []
+            print(f"[fetch-history] sample market keys: {sample_keys[:24]}")
+        ranked = rank_markets(markets)
+        # Any liquidity signal at all qualifies the market as worth a try.
+        tradeable = [m for m in ranked if liquidity_score(m) >= min_volume_24h]
+        if verbose:
+            top_sample = [(m.get('ticker'), liquidity_score(m),
+                            _int_field(m, 'volume'),
+                            _int_field(m, 'open_interest'),
+                            _int_field(m, 'volume_24h'))
+                           for m in ranked[:5]]
+            print(f"[fetch-history] {len(tradeable)} have liquidity >= {min_volume_24h}")
+            print(f"[fetch-history] top5 by liquidity score: {top_sample}")
+        # If nothing passes the filter, still try the highest-ranked ones
+        # rather than giving up. Empty candle responses are handled downstream.
+        tickers_list = [m["ticker"] for m in (tradeable or ranked[:limit * 3])]
+        series_map = {m["ticker"]: extract_series_ticker(m) for m in (tradeable or ranked)}
+        tickers = tickers_list
 
     histories: list[MarketHistory] = []
     attempts = 0

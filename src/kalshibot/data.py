@@ -50,7 +50,11 @@ class MarketHistory:
             "open_interest": snap.open_interest,
             "minutes_to_close": snap.minutes_to_close,
         }
-        self.df.loc[snap.ts] = row
+        if self.df.empty:
+            # `.loc[idx] = dict` fails on a frame with no columns.
+            self.df = pd.DataFrame([row], index=pd.DatetimeIndex([snap.ts]))
+        else:
+            self.df.loc[snap.ts] = row
 
     @property
     def mid(self) -> pd.Series:

@@ -121,23 +121,35 @@ class LiveFeed:
             self._stop.wait(max(5, self.cfg.poll_seconds))
 
     def _poll_once(self) -> None:
-        page = self.client.get_markets(limit=self.max_markets, status="open")
-        markets = page.get("markets", []) if isinstance(page, dict) else []
-        self._status.markets_seen = len(markets)
+        # Pull a bigger candidate pool so the most-traded markets surface,
+        # then keep only the ones with any liquidity signal.
+        from .history_fetch import liquidity_score, rank_markets
+        page = self.client.get_markets(limit=max(200, self.max_markets * 4),
+                                         status="open")
+        all_markets = page.get("markets", []) if isinstance(page, dict) else []
         self._status.authed = True
+        # Rank by liquidity and keep the top N - otherwise Kalshi's default
+        # ordering buries real markets behind hundreds of empty baskets.
+        ranked = rank_markets(all_markets)
+        tradeable = [m for m in ranked if liquidity_score(m) > 0]
+        chosen = (tradeable or ranked)[: self.max_markets]
+        self._status.markets_seen = len(chosen)
         now = pd.Timestamp.now()
-        for m in markets[: self.max_markets]:
+        for m in chosen:
             ticker = m.get("ticker")
             if not ticker:
                 continue
-            self._titles[ticker] = m.get("title") or m.get("subtitle") or ticker
-            snap = snapshot_from_market(m, now)
-            hist = self._histories.setdefault(ticker, MarketHistory(ticker))
-            hist.append(snap)
-            # Trim history
-            if len(hist.df) > self.max_bars:
-                hist.df = hist.df.iloc[-self.max_bars:]
-            self._signals[ticker] = self._signal_for(ticker, hist, snap)
+            try:
+                self._titles[ticker] = m.get("title") or m.get("subtitle") or ticker
+                snap = snapshot_from_market(m, now)
+                hist = self._histories.setdefault(ticker, MarketHistory(ticker))
+                hist.append(snap)
+                if len(hist.df) > self.max_bars:
+                    hist.df = hist.df.iloc[-self.max_bars:]
+                self._signals[ticker] = self._signal_for(ticker, hist, snap)
+            except Exception as e:
+                # One flaky ticker should never kill the whole poll
+                self._status.last_error = f"{ticker}: {type(e).__name__}: {e}"
 
     def _signal_for(self, ticker: str, h: MarketHistory, snap) -> LiveSignal:
         title = self._titles.get(ticker, ticker)
