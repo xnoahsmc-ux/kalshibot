@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Settings · Kalshibot{% endblock %}
+{% block main %}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Settings</h1>
+    <p class="page-sub">Configure the bot via environment variables (the form below produces a <code>.env</code> block).</p>
+  </div>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-head"><div><div class="card-title">Bot configuration</div>
+      <div class="card-sub">Read from the current environment</div></div></div>
+    <form method="post">
+      <div class="field">
+        <label>Environment</label>
+        <select name="env">
+          <option value="demo" {% if cfg.env == 'demo' %}selected{% endif %}>demo</option>
+          <option value="prod" {% if cfg.env == 'prod' %}selected{% endif %}>prod</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Dry-run (safe mode — no orders sent)</label>
+        <select name="dry_run">
+          <option value="true"  {% if cfg.dry_run %}selected{% endif %}>enabled</option>
+          <option value="false" {% if not cfg.dry_run %}selected{% endif %}>disabled</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Bankroll (USD)</label>
+        <input type="number" step="10" name="bankroll" value="{{ cfg.bankroll_usd }}">
+      </div>
+      <div class="field">
+        <label>Max position per market (USD)</label>
+        <input type="number" step="5" name="max_position" value="{{ cfg.max_position_usd }}">
+      </div>
+      <div class="field">
+        <label>Minimum edge</label>
+        <input type="number" step="0.005" name="min_edge" value="{{ cfg.min_edge }}">
+      </div>
+      <div class="field">
+        <label>Poll seconds</label>
+        <input type="number" step="5" name="poll_seconds" value="{{ cfg.poll_seconds }}">
+      </div>
+      <button type="submit">Generate .env block</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><div><div class="card-title">Suggested .env</div>
+      <div class="card-sub">Copy into your local .env file</div></div></div>
+    {% if saved %}
+    <pre style="background: var(--bg-muted); border: 1px solid var(--border); border-radius: 8px; padding: 16px; color: var(--text); font-family: ui-monospace, monospace; font-size: 12px; line-height: 1.7; overflow-x: auto;">
+KALSHI_ENV={{ saved.env }}
+KALSHIBOT_DRY_RUN={{ saved.dry_run }}
+KALSHIBOT_BANKROLL_USD={{ saved.bankroll }}
+KALSHIBOT_MAX_POSITION_USD={{ saved.max_position }}
+KALSHIBOT_MIN_EDGE={{ saved.min_edge }}
+KALSHIBOT_POLL_SECONDS={{ saved.poll_seconds }}
+</pre>
+    <p class="hint">After updating <code>.env</code>, restart with <code>kalshibot run</code>.</p>
+    {% else %}
+    <p class="dim">Submit the form to generate a copy-pasteable <code>.env</code> block.</p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

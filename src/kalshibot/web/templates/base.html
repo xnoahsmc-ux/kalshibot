@@ -21,7 +21,9 @@
       <a href="{{ url_for('markets_page') }}"     class="{% if page=='markets'   %}active{% endif %}"><span class="dot"></span>Markets</a>
       <a href="{{ url_for('ensemble_page') }}"    class="{% if page=='ensemble'  %}active{% endif %}"><span class="dot"></span>Ensemble</a>
       <a href="{{ url_for('reliability_page') }}" class="{% if page=='reliability'%}active{% endif %}"><span class="dot"></span>Calibration</a>
+      <a href="{{ url_for('live_page') }}"        class="{% if page=='live'      %}active{% endif %}"><span class="dot"></span>Live suggestions</a>
       <a href="{{ url_for('backtest_page') }}"    class="{% if page=='backtest'  %}active{% endif %}"><span class="dot"></span>Run backtest</a>
+      <a href="{{ url_for('settings_page') }}"    class="{% if page=='settings'  %}active{% endif %}"><span class="dot"></span>Settings</a>
     </nav>
     <div style="position:absolute; bottom:20px; left:16px; right:16px;">
       <div class="hint">All values from backtest simulation. Live trading is dry-run by default.</div>

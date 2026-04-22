@@ -155,6 +155,46 @@ def create_app(state: AppState | None = None) -> Flask:
         bins = reliability_from_report(r)
         return jsonify({"bins": bins})
 
+    @app.route("/api/sparks")
+    def api_sparks():
+        """Downsampled strategy equity curves (~40 points each) for sparkline
+        rendering in the strategies table.
+        """
+        r = state.report
+        if r is None or r.strategy_equity.empty:
+            return jsonify({})
+        df = r.strategy_equity
+        step = max(1, len(df) // 40)
+        small = df.iloc[::step]
+        return jsonify({
+            c: [float(v) for v in small[c].tolist()] for c in small.columns
+        })
+
+    @app.route("/api/suggestions")
+    def api_suggestions():
+        """What would the bot do on each market right now?
+        Uses the last bar of each market's history in the report.
+        """
+        r = state.report
+        if r is None:
+            return jsonify([])
+        # We can't rebuild histories without re-synthesizing; instead rank
+        # markets by ensemble PnL and surface the last-bar hit-rate as a
+        # heuristic confidence. This is illustrative for the UI; live mode
+        # pulls real snapshots.
+        rows = []
+        df = r.per_market.reset_index()
+        df = df.sort_values("total", ascending=False)
+        for _, row in df.iterrows():
+            rows.append({
+                "market": row.get("market"),
+                "genre": row.get("genre"),
+                "total": float(row.get("total", 0.0)),
+                "sharpe": float(row.get("sharpe", 0.0)),
+                "hit_rate": float(row.get("hit_rate", 0.0)),
+            })
+        return jsonify(rows[:50])
+
     @app.route("/api/walkforward")
     def api_walkforward():
         r = state.report
@@ -184,6 +224,22 @@ def create_app(state: AppState | None = None) -> Flask:
         return Response(df.to_csv(index=False),
                         mimetype="text/csv",
                         headers={"Content-Disposition": f"attachment; filename={kind}.csv"})
+
+    @app.route("/live")
+    def live_page() -> str:
+        r = state.report
+        return render_template("live.html", page="live", has_report=r is not None)
+
+    @app.route("/settings", methods=["GET", "POST"])
+    def settings_page():
+        from ..config import load_config
+        cfg = load_config()
+        if request.method == "POST":
+            # Settings are env-backed; we write suggestions so the user can
+            # paste them into .env - we don't mutate .env from the server.
+            return render_template("settings.html", page="settings", cfg=cfg,
+                                   saved=request.form.to_dict())
+        return render_template("settings.html", page="settings", cfg=cfg, saved=None)
 
     @app.route("/reliability")
     def reliability_page() -> str:

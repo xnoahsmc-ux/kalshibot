@@ -28,7 +28,7 @@ def test_pages_render(tmp_path):
     app = create_app(state)
     client = app.test_client()
     for path in ["/", "/strategies", "/genres", "/markets", "/ensemble",
-                 "/reliability", "/backtest"]:
+                 "/reliability", "/live", "/settings", "/backtest"]:
         r = client.get(path)
         assert r.status_code == 200, (path, r.status_code)
         assert b"kalshibot" in r.data
@@ -44,7 +44,8 @@ def test_apis_return_json(tmp_path):
     assert j["has_report"] is True
     assert j["n_markets"] == 4
     for p in ["/api/equity", "/api/weights", "/api/genres", "/api/genre_equity",
-              "/api/reliability", "/api/walkforward"]:
+              "/api/reliability", "/api/walkforward", "/api/sparks",
+              "/api/suggestions"]:
         rr = client.get(p)
         assert rr.status_code == 200
         assert rr.get_json() is not None

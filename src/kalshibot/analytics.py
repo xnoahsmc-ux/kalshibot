@@ -17,17 +17,29 @@ from .genres import classify
 
 def _stats_from_pnl(pnl: pd.Series) -> dict:
     if len(pnl) == 0:
-        return {"total": 0.0, "mean": 0.0, "sharpe": 0.0, "max_dd": 0.0,
-                "hit_rate": 0.0, "n_bars": 0}
+        return {"total": 0.0, "mean": 0.0, "sharpe": 0.0, "sortino": 0.0,
+                "calmar": 0.0, "max_dd": 0.0, "hit_rate": 0.0, "n_bars": 0}
     eq = pnl.cumsum()
     roll_max = eq.cummax()
-    dd = (eq - roll_max).min()
-    sd = pnl.std()
+    dd_series = (eq - roll_max)
+    dd = float(dd_series.min())
+    sd = float(pnl.std())
+    mean = float(pnl.mean())
+    # Annualization factor matching the rest of the codebase.
+    ann = np.sqrt(252 * 390)
+    sharpe = mean / sd * ann if sd > 0 else 0.0
+    # Sortino uses only downside deviation.
+    downside = pnl[pnl < 0]
+    dsd = float(downside.std()) if len(downside) else 0.0
+    sortino = mean / dsd * ann if dsd > 0 else 0.0
+    calmar = (eq.iloc[-1] / abs(dd)) if dd < 0 else 0.0
     return {
         "total": float(eq.iloc[-1]),
-        "mean": float(pnl.mean()),
-        "sharpe": float(pnl.mean() / sd * np.sqrt(252 * 390)) if sd > 0 else 0.0,
-        "max_dd": float(dd),
+        "mean": mean,
+        "sharpe": float(sharpe),
+        "sortino": float(sortino),
+        "calmar": float(calmar),
+        "max_dd": dd,
         "hit_rate": float((pnl > 0).mean()),
         "n_bars": int(len(pnl)),
     }

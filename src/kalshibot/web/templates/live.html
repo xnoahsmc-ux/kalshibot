@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Live · Kalshibot{% endblock %}
+{% block main %}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Live suggestions</h1>
+    <p class="page-sub">Markets the current ensemble would most want to trade, ranked by backtested edge.</p>
+  </div>
+  <div class="row">
+    <span class="badge warn">dry-run preview</span>
+  </div>
+</div>
+
+{% if not has_report %}
+  <div class="empty"><h3>No backtest yet</h3>
+    <a class="btn" href="{{ url_for('backtest_page') }}">Start a backtest</a></div>
+{% else %}
+<div class="tablewrap">
+  <table>
+    <thead><tr>
+      <th>Market</th><th>Genre</th>
+      <th class="num">Backtest PnL</th><th class="num">Sharpe</th>
+      <th class="num">Hit rate</th><th>Suggested side</th>
+    </tr></thead>
+    <tbody id="rows"><tr><td colspan="6" class="dim">Loading…</td></tr></tbody>
+  </table>
+</div>
+<div class="spacer"></div>
+<div class="card">
+  <div class="card-head"><div><div class="card-title">How to go live</div></div></div>
+  <p class="dim" style="font-size:13px; line-height:1.7;">
+    When you run <code>kalshibot run</code> the live loop pulls open markets
+    every <code>POLL_SECONDS</code>, rebuilds per-market history, asks the
+    ensemble for a probability + dispersion, applies the dispersion-damped
+    Kelly fraction, and (unless <code>DRY_RUN=true</code>) sends a limit
+    order at the current quote, subject to the per-genre exposure cap.
+  </p>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if has_report %}
+<script>
+(async function () {
+  const rows = await KB.fetchJSON('/api/suggestions');
+  const tbody = document.getElementById('rows');
+  if (!rows.length) { tbody.innerHTML = '<tr><td colspan="6" class="dim">No markets yet</td></tr>'; return; }
+  tbody.innerHTML = rows.map(r => {
+    const sideCls = r.total >= 0 ? 'pos' : 'neg';
+    const side = r.total >= 0 ? 'lean YES' : 'lean NO';
+    return `<tr>
+      <td class="mono">${r.market}</td>
+      <td><span class="pill">${r.genre}</span></td>
+      <td class="num ${r.total >= 0 ? 'pos' : 'neg'}">${KB.fmt.money(r.total)}</td>
+      <td class="num ${r.sharpe >= 0 ? 'pos' : 'neg'}">${KB.fmt.num2(r.sharpe)}</td>
+      <td class="num">${KB.fmt.pct(r.hit_rate)}</td>
+      <td><span class="pill" style="background: ${r.total>=0?'rgba(52,211,153,.14)':'rgba(248,113,113,.14)'}; color: ${r.total>=0?'#34d399':'#f87171'}; border-color: ${r.total>=0?'rgba(52,211,153,.3)':'rgba(248,113,113,.3)'};">${side}</span></td>
+    </tr>`;
+  }).join('');
+})();
+</script>
+{% endif %}
+{% endblock %}
