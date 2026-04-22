@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% block title %}Popular markets · Kalshi Bot{% endblock %}
+{% block main %}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Popular markets</h1>
+    <p class="page-sub">Top tracked Kalshi markets and how they're moving in real time.</p>
+  </div>
+  <div class="row">
+    <a class="btn btn-ghost" href="{{ url_for('live_page') }}">Go to live feed</a>
+  </div>
+</div>
+
+<div id="grid" class="grid-3"></div>
+
+<div class="spacer"></div>
+<div class="empty" id="emptyState" style="display:none;">
+  <h3>Start the live feed</h3>
+  <p>Popular markets populate from the live feed. Turn it on to see data flowing in.</p>
+  <a class="btn" href="{{ url_for('live_page') }}">Open Live feed</a>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const grid = document.getElementById('grid');
+const emptyEl = document.getElementById('emptyState');
+
+function confPill(conf) {
+  if (!conf) return '';
+  const label = conf === 'high' ? 'HIGH' : conf === 'med' ? 'MEDIUM' : 'LOW';
+  return `<span class="conf conf-${conf}"><span class="dot"></span>${label}</span>`;
+}
+
+function sidePill(side) {
+  const cls = side === 'YES' ? 'side-yes' : side === 'NO' ? 'side-no' : 'side-flat';
+  return `<span class="pill ${cls}">${side}</span>`;
+}
+
+function drawSpark(canvas, values, color) {
+  if (!values || values.length < 2) return;
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const W = canvas.clientWidth, H = canvas.clientHeight;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  const lo = Math.min(...values), hi = Math.max(...values);
+  const span = Math.max(1e-6, hi - lo);
+  const step = W / (values.length - 1);
+  ctx.beginPath();
+  values.forEach((v, i) => {
+    const x = i * step;
+    const y = H - ((v - lo) / span) * (H - 4) - 2;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  });
+  ctx.strokeStyle = color || '#38bdf8';
+  ctx.lineWidth = 1.8;
+  ctx.stroke();
+  // Fill
+  ctx.lineTo(W, H); ctx.lineTo(0, H); ctx.closePath();
+  ctx.fillStyle = (color || '#38bdf8') + '22';
+  ctx.fill();
+}
+
+async function load() {
+  try {
+    const d = await KB.fetchJSON('/api/popular');
+    const markets = d.markets || [];
+    if (!markets.length) {
+      grid.innerHTML = '';
+      emptyEl.style.display = 'block';
+      setTimeout(load, 5000);
+      return;
+    }
+    emptyEl.style.display = 'none';
+    grid.innerHTML = markets.map((m, i) => `
+      <div class="card" id="pop-${i}" style="padding:16px;">
+        <div class="row" style="justify-content:space-between; margin-bottom:8px;">
+          <span class="pill">${m.genre}</span>
+          ${confPill(m.confidence)}
+        </div>
+        <div style="font-size:14px; font-weight:700; margin-bottom:4px; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${m.title || m.ticker}</div>
+        <div class="mono dim" style="font-size:11px; margin-bottom:10px;">${m.ticker}</div>
+        <div style="height:70px;"><canvas id="spark-${i}"></canvas></div>
+        <div class="row" style="justify-content:space-between; margin-top:10px;">
+          <div>
+            <div style="font-size:11px; color:var(--text-mute); letter-spacing:.08em; text-transform:uppercase; font-weight:700;">Price</div>
+            <div style="font-size:18px; font-weight:700; font-variant-numeric:tabular-nums;">${(m.last*100).toFixed(0)}¢</div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-size:11px; color:var(--text-mute); letter-spacing:.08em; text-transform:uppercase; font-weight:700;">Bot says</div>
+            <div style="font-size:18px; font-weight:700; font-variant-numeric:tabular-nums;">${(m.prob*100).toFixed(0)}%</div>
+          </div>
+          <div style="text-align:right;">
+            ${sidePill(m.suggested_side)}
+          </div>
+        </div>
+      </div>
+    `).join('');
+    markets.forEach((m, i) => {
+      const canvas = document.getElementById(`spark-${i}`);
+      if (canvas && m.mids && m.mids.length > 1) {
+        const up = m.mids[m.mids.length - 1] >= m.mids[0];
+        drawSpark(canvas, m.mids, up ? '#22c55e' : '#ef4444');
+      }
+    });
+  } catch (e) {}
+  setTimeout(load, 3000);
+}
+load();
+</script>
+{% endblock %}

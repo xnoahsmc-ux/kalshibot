@@ -45,6 +45,10 @@ class LiveSignal:
     suggested_notional: float
     minutes_to_close: float
     ts: str
+    confidence: str = "low"        # "high" | "med" | "low"
+    win_prob: float = 0.0          # probability bot assigns to winning the bet
+    expected_profit: float = 0.0   # dollars per dollar bet, given win/loss odds
+    rationale: str = ""            # plain-English reason for the call
 
 
 @dataclass
@@ -182,11 +186,58 @@ class LiveFeed:
         disp_scale = max(0.1, 1.0 - 2 * disp)
         f_damped = f * disp_scale
         notional = min(self.cfg.max_position_usd, abs(f_damped) * self.cfg.bankroll_usd)
-        if abs(edge) < self.cfg.min_edge or disp > 0.18 or abs(f_damped) < 1e-6:
+
+        # Dead-market filter: if the spread is zero or the market is at an
+        # extreme with no liquidity, mark as flat.
+        spread = snap.yes_ask - snap.yes_bid
+        dead = (spread <= 0 or
+                (snap.yes_bid < 0.02 and snap.yes_ask < 0.02) or
+                (snap.yes_bid > 0.98 and snap.yes_ask > 0.98))
+
+        if dead or abs(edge) < self.cfg.min_edge or abs(f_damped) < 1e-6:
             side = "flat"
             notional = 0.0
         else:
             side = "YES" if f_damped > 0 else "NO"
+
+        # Confidence: combines edge magnitude and how much strategies agree
+        abs_edge = abs(edge)
+        if abs_edge >= 0.10 and disp < 0.10:
+            conf = "high"
+        elif abs_edge >= 0.05 and disp < 0.18:
+            conf = "med"
+        else:
+            conf = "low"
+
+        # Win probability and expected profit per dollar bet
+        if side == "YES":
+            entry_price = snap.yes_ask
+            win_prob = float(prob)
+            # Bet $1 at yes_ask; if YES wins -> collect $1 (pay $yes_ask, win $1-$yes_ask)
+            # per $1 staked: (win_prob * (1-entry)/entry) - (1-win_prob)
+            ev_per_dollar = (win_prob * (1 - entry_price) / max(0.01, entry_price)) - (1 - win_prob)
+        elif side == "NO":
+            entry_price = 1 - snap.yes_bid
+            win_prob = float(1 - prob)
+            ev_per_dollar = (win_prob * (1 - entry_price) / max(0.01, entry_price)) - (1 - win_prob)
+        else:
+            entry_price = mid
+            win_prob = 0.0
+            ev_per_dollar = 0.0
+
+        expected_profit = ev_per_dollar * notional
+
+        if side == "flat":
+            if dead:
+                rationale = "Dead market — no liquidity."
+            elif abs_edge < self.cfg.min_edge:
+                rationale = "Edge too small to cover fees."
+            else:
+                rationale = "Strategies disagree too much."
+        else:
+            rationale = (f"Bot sees {win_prob*100:.0f}% chance of winning vs market's "
+                          f"{entry_price*100:.0f}% implied probability.")
+
         return LiveSignal(
             ticker=ticker,
             genre=genre,
@@ -204,6 +255,10 @@ class LiveFeed:
             suggested_notional=float(notional),
             minutes_to_close=float(snap.minutes_to_close),
             ts=pd.Timestamp.now(tz="UTC").isoformat(),
+            confidence=conf,
+            win_prob=float(win_prob),
+            expected_profit=float(expected_profit),
+            rationale=rationale,
         )
 
     def _ensemble_prob(self, h: MarketHistory) -> tuple[float, float]:

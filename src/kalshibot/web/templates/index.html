@@ -3,11 +3,11 @@
 {% block main %}
 <div class="page-head">
   <div>
-    <h1 class="page-title">Overview</h1>
-    <p class="page-sub">Ensemble performance across all backtested markets and genres.</p>
+    <h1 class="page-title">Dashboard</h1>
+    <p class="page-sub">Backtested ensemble performance across all markets and genres.</p>
   </div>
   <div class="row">
-    <a class="btn" href="{{ url_for('live_page') }}" style="background: linear-gradient(180deg, #34d399, #059669); color: #06281c;">▶ Live Kalshi feed</a>
+    <a class="btn btn-start" href="{{ url_for('live_page') }}">▶ Live feed</a>
     <a class="btn btn-ghost" href="{{ url_for('backtest_page') }}">Run new backtest</a>
   </div>
 </div>

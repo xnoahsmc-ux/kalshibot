@@ -225,6 +225,14 @@ def create_app(state: AppState | None = None) -> Flask:
                         mimetype="text/csv",
                         headers={"Content-Disposition": f"attachment; filename={kind}.csv"})
 
+    @app.route("/trades")
+    def trades_page() -> str:
+        return render_template("trades.html", page="trades")
+
+    @app.route("/popular")
+    def popular_page() -> str:
+        return render_template("popular.html", page="popular")
+
     @app.route("/live")
     def live_page() -> str:
         r = state.report
@@ -305,6 +313,83 @@ def create_app(state: AppState | None = None) -> Flask:
             "running": feed.status().running,
             "signals": [s.__dict__ for s in sigs],
         })
+
+    @app.route("/api/balance")
+    def api_balance():
+        from ..config import load_config
+        from ..kalshi_client import KalshiClient
+        cfg = load_config()
+        if not (cfg.api_key_id and cfg.api_private_key_path):
+            return jsonify({"balance_text": "—", "portfolio_text": "—",
+                            "configured": False})
+        client = KalshiClient(cfg)
+        try:
+            bal = client.get_balance()
+            b = bal.get("balance", 0)
+            pv = bal.get("portfolio_value", 0)
+            # Kalshi returns balance in cents (pennies-of-dollar).
+            return jsonify({
+                "balance_cents": b, "portfolio_cents": pv,
+                "balance_text": f"${b/100:,.2f}",
+                "portfolio_text": f"${pv/100:,.2f}",
+                "configured": True,
+            })
+        except Exception as e:
+            return jsonify({"balance_text": "err", "portfolio_text": "—",
+                            "error": str(e), "configured": True})
+
+    @app.route("/api/trades")
+    def api_trades():
+        from ..config import load_config
+        from ..kalshi_client import KalshiClient
+        cfg = load_config()
+        if not (cfg.api_key_id and cfg.api_private_key_path):
+            return jsonify({"positions": [], "orders": [], "configured": False})
+        client = KalshiClient(cfg)
+        try:
+            positions = client.get_positions(limit=200).get("market_positions", [])
+        except Exception as e:
+            positions = []
+            pos_err = str(e)
+        else:
+            pos_err = None
+        try:
+            orders = client.get_orders(limit=100).get("orders", [])
+        except Exception as e:
+            orders = []
+            ord_err = str(e)
+        else:
+            ord_err = None
+        return jsonify({
+            "positions": positions, "orders": orders,
+            "configured": True,
+            "positions_error": pos_err, "orders_error": ord_err,
+        })
+
+    @app.route("/api/popular")
+    def api_popular():
+        """Snapshot of the most-traded markets from the live feed, one per
+        popular series, with their recent mid price series."""
+        feed = state.live()
+        if feed is None or not feed.signals():
+            return jsonify({"markets": []})
+        signals = feed.signals()[:12]
+        out = []
+        for s in signals:
+            hist = feed.history(s.ticker)
+            mids = []
+            if hist is not None and len(hist.df) > 0:
+                mids = [float(v) for v in hist.mid.tolist()[-60:]]
+            out.append({
+                "ticker": s.ticker, "title": s.title, "genre": s.genre,
+                "bid": s.yes_bid, "ask": s.yes_ask, "last": s.last,
+                "volume": s.volume,
+                "prob": s.ensemble_prob, "edge": s.edge,
+                "suggested_side": s.suggested_side,
+                "confidence": s.confidence,
+                "mids": mids,
+            })
+        return jsonify({"markets": out})
 
     @app.route("/api/live/auth_check")
     def api_live_auth_check():

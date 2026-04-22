@@ -1,45 +1,44 @@
 {% extends "base.html" %}
-{% block title %}Live Kalshi feed · Kalshibot{% endblock %}
+{% block title %}Live · Kalshi Bot{% endblock %}
 {% block main %}
 
-<div class="card" style="background: linear-gradient(135deg, rgba(52,211,153,.12), rgba(56,189,248,.08)); border-color: rgba(52,211,153,.35); margin-bottom:18px;">
-  <div class="row" style="justify-content:space-between;">
-    <div>
-      <h1 class="page-title" style="margin:0; font-size:22px;">Live Kalshi feed</h1>
-      <p class="page-sub" style="margin-top:6px;">
-        Real-time polling of Kalshi, ensemble-scored, ranked by absolute edge.
-        Refreshes automatically every 3 seconds while running.
-      </p>
-    </div>
-    <div class="row">
-      <button id="startBtn" style="font-size:15px; padding:14px 22px; background: linear-gradient(180deg,#34d399,#059669); color:#06281c;">▶ Start live feed</button>
-      <button id="stopBtn"  class="btn-ghost">■ Stop</button>
-      <button id="authBtn"  class="btn-ghost">Auth check</button>
-    </div>
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Live feed</h1>
+    <p class="page-sub">Real-time Kalshi polling. The bot tells you which bets to take and how much to stake.</p>
+  </div>
+  <div class="row">
+    <button id="toggleBtn" class="btn-big btn-start">▶ START LIVE FEED</button>
+    <button id="authBtn" class="btn-ghost">Check connection</button>
   </div>
 </div>
 
-<div id="banner" style="display:none;"></div>
+<div id="banner" style="display:none; margin-bottom:16px;"></div>
 
-<div class="kpi-grid" id="liveKpis"></div>
+<div class="grid-4" style="margin-bottom:24px;">
+  <div class="kpi" id="kpiFeed"><div class="label">Status</div><div class="value">idle</div><div class="sub">press start</div></div>
+  <div class="kpi" id="kpiSignals"><div class="label">Live signals</div><div class="value">0</div><div class="sub">actionable bets</div></div>
+  <div class="kpi" id="kpiHigh"><div class="label">High conf</div><div class="value good">0</div><div class="sub">strong plays</div></div>
+  <div class="kpi" id="kpiPoll"><div class="label">Markets polled</div><div class="value">0</div><div class="sub">0 polls</div></div>
+</div>
 
+<h2>Recommended bets</h2>
 <div class="tablewrap">
   <table>
     <thead><tr>
       <th>Market</th>
       <th>Genre</th>
-      <th class="num">Bid</th>
-      <th class="num">Ask</th>
-      <th class="num">Ensemble P</th>
-      <th class="num">Edge</th>
-      <th class="num">Dispersion</th>
-      <th>Suggested</th>
-      <th class="num">Notional</th>
+      <th>Confidence</th>
+      <th>Recommendation</th>
+      <th class="num">Market price</th>
+      <th class="num">Bot's estimate</th>
+      <th class="num">Stake</th>
+      <th class="num">Expected profit</th>
       <th class="num">Close in</th>
     </tr></thead>
     <tbody id="rows">
-      <tr><td colspan="10" class="dim" style="text-align:center; padding:40px;">
-        Press the big green <b>Start live feed</b> button above to begin polling Kalshi.
+      <tr><td colspan="9" class="dim" style="text-align:center; padding:60px;">
+        Press <b>START LIVE FEED</b> above to begin polling Kalshi.
       </td></tr>
     </tbody>
   </table>
@@ -48,149 +47,182 @@
 <div class="spacer"></div>
 <div class="grid-2">
   <div class="card">
-    <div class="card-head"><div><div class="card-title">How this works</div></div></div>
-    <p class="dim" style="font-size:13px; line-height:1.7;">
-      The live feed pulls open markets from Kalshi, appends a rolling
-      MarketHistory per ticker, and asks the saved ensemble for a
-      probability. Suggestions are gated by minimum edge, dispersion cap,
-      and per-genre exposure (configured in <code>.env</code>). This page
-      is read-only preview; actual order placement only happens when you
-      run <code>kalshibot run</code> with <code>DRY_RUN=false</code>.
-    </p>
+    <div class="card-head"><div><div class="card-title">What these mean</div>
+      <div class="card-sub">plain-English glossary</div></div></div>
+    <ul class="dim" style="font-size:13px; line-height:1.8; padding-left:20px; margin:0;">
+      <li><b style="color:var(--text);">Market price</b> — what Kalshi is charging to bet YES on this market right now (in cents).</li>
+      <li><b style="color:var(--text);">Bot's estimate</b> — the probability the ensemble thinks YES will actually win.</li>
+      <li><b style="color:var(--text);">Stake</b> — how much the bot would bet, sized via half-Kelly capped at your per-market limit.</li>
+      <li><b style="color:var(--text);">Expected profit</b> — average dollar payoff on this stake if you repeated it many times.</li>
+      <li><b style="color:var(--text);">Confidence: HIGH</b> — edge &gt; 10% and all strategies agree. Strongest signal.</li>
+      <li><b style="color:var(--text);">Confidence: MED</b> — edge &gt; 5%, strategies mostly agree.</li>
+      <li><b style="color:var(--text);">Confidence: LOW</b> — thin edge or strategies disagree. Skip these.</li>
+    </ul>
   </div>
   <div class="card">
-    <div class="card-head"><div><div class="card-title">Troubleshooting</div></div></div>
-    <ul class="dim" style="font-size:13px; line-height:1.7; padding-left:20px;">
-      <li>Click <b>Auth check</b> to verify your key ID + PEM path load correctly.</li>
-      <li>401 → signature rejected. Re-check that <code>KALSHI_API_KEY_ID</code> matches the PEM you issued.</li>
-      <li>403 <i>Host not in allowlist</i> → your network egress is blocked; try from a normal connection.</li>
-      <li>No signals → run a backtest first; without a saved ensemble every signal stays flat.</li>
-      <li>Empty table for a while → Kalshi poll is slow, give it 10-30 seconds after starting.</li>
-    </ul>
+    <div class="card-head"><div><div class="card-title">How to trade for real</div></div></div>
+    <p class="dim" style="font-size:13px; line-height:1.7;">
+      This page is <b>read-only by default</b>. To place the suggested bets
+      automatically, stop the web UI, edit <code>.env</code> and set
+      <code>KALSHIBOT_DRY_RUN=false</code>, then restart. Start with a tiny
+      <code>KALSHIBOT_MAX_POSITION_USD</code> (like $5) and a high
+      <code>KALSHIBOT_MIN_EDGE</code> (like 0.08) to only take high-confidence plays.
+    </p>
   </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-const startBtn = document.getElementById('startBtn');
-const stopBtn  = document.getElementById('stopBtn');
-const authBtn  = document.getElementById('authBtn');
-const rows     = document.getElementById('rows');
-const banner   = document.getElementById('banner');
-const kpiBox   = document.getElementById('liveKpis');
+const toggle = document.getElementById('toggleBtn');
+const authBtn = document.getElementById('authBtn');
+const rows   = document.getElementById('rows');
+const banner = document.getElementById('banner');
 
 function showBanner(msg, kind) {
   banner.style.display = 'block';
-  const color = kind === 'bad' ? '#f87171' : (kind === 'ok' ? '#34d399' : '#7dd3fc');
-  banner.innerHTML = `<div class="card" style="border-color:${color}; margin-bottom:14px;">${msg}</div>`;
+  const color = kind === 'bad' ? 'var(--bad)' : (kind === 'ok' ? 'var(--ok)' : 'var(--accent)');
+  banner.innerHTML = `<div class="card" style="border-color:${color};">${msg}</div>`;
 }
 function hideBanner() { banner.style.display = 'none'; }
 
-async function refreshStatus() {
-  try {
-    const st = await KB.fetchJSON('/api/live/status');
-    kpiBox.innerHTML = [
-      `<div class="kpi"><div class="label">Feed</div>
-        <div class="value ${st.running?'good':''}">${st.running ? 'RUNNING' : 'idle'}</div></div>`,
-      `<div class="kpi"><div class="label">Credentials</div>
-        <div class="value">${st.configured ? 'OK' : 'MISSING'}</div>
-        <div class="sub">${st.env} · ${st.base_url.split('//')[1]}</div></div>`,
-      `<div class="kpi"><div class="label">Markets polled</div>
-        <div class="value">${st.markets_seen || 0}</div>
-        <div class="sub">${st.polls || 0} polls total</div></div>`,
-      `<div class="kpi ${st.has_report?'':'bad'}"><div class="label">Ensemble</div>
-        <div class="value">${st.has_report ? 'loaded' : 'none'}</div>
-        <div class="sub">${st.has_report ? 'ready' : 'run a backtest first'}</div></div>`,
-    ].join('');
-    if (st.last_error) {
-      showBanner(`<b style="color:#f87171;">Last poll error:</b> <code>${st.last_error}</code>`, 'bad');
-    }
-  } catch (e) {
-    kpiBox.innerHTML = `<div class="kpi bad"><div class="label">Status</div><div class="value">offline</div></div>`;
+function setToggleState(running) {
+  if (running) {
+    toggle.textContent = '■ STOP LIVE FEED';
+    toggle.className = 'btn-big btn-stop';
+  } else {
+    toggle.textContent = '▶ START LIVE FEED';
+    toggle.className = 'btn-big btn-start';
   }
 }
 
-async function refreshSignals() {
+function confPill(conf) {
+  const label = conf === 'high' ? 'HIGH' : conf === 'med' ? 'MEDIUM' : 'LOW';
+  return `<span class="conf conf-${conf}"><span class="dot"></span>${label}</span>`;
+}
+
+function sidePill(side) {
+  const cls = side === 'YES' ? 'side-yes' : side === 'NO' ? 'side-no' : 'side-flat';
+  return `<span class="pill ${cls}">${side}</span>`;
+}
+
+async function refresh() {
+  try {
+    const st = await KB.fetchJSON('/api/live/status');
+    setToggleState(st.running);
+    document.getElementById('kpiFeed').innerHTML =
+      `<div class="label">Status</div><div class="value ${st.running?'good':''}">${st.running?'RUNNING':'idle'}</div>
+       <div class="sub">${st.base_url.split('//')[1]}</div>`;
+    document.getElementById('kpiPoll').innerHTML =
+      `<div class="label">Markets polled</div><div class="value">${st.markets_seen || 0}</div>
+       <div class="sub">${st.polls || 0} polls</div>`;
+    if (st.last_error) {
+      showBanner(`<b style="color:var(--bad);">Poll error:</b> <code class="dim">${st.last_error}</code>`, 'bad');
+    }
+  } catch(e){}
+
   try {
     const d = await KB.fetchJSON('/api/live/signals');
-    if (!d.signals || !d.signals.length) {
+    const sigs = d.signals || [];
+    const actionable = sigs.filter(s => s.suggested_side !== 'flat');
+    const highConf = actionable.filter(s => s.confidence === 'high');
+
+    document.getElementById('kpiSignals').innerHTML =
+      `<div class="label">Live signals</div><div class="value ${actionable.length?'good':''}">${actionable.length}</div>
+       <div class="sub">actionable bets</div>`;
+    document.getElementById('kpiHigh').innerHTML =
+      `<div class="label">High conf</div><div class="value ${highConf.length?'good':''}">${highConf.length}</div>
+       <div class="sub">strong plays</div>`;
+
+    if (!sigs.length) {
       rows.innerHTML = d.running
-        ? '<tr><td colspan="10" class="dim" style="text-align:center; padding:40px;">Waiting for first poll to complete (5-30 seconds)…</td></tr>'
-        : '<tr><td colspan="10" class="dim" style="text-align:center; padding:40px;">Feed idle. Press the green Start button above.</td></tr>';
+        ? '<tr><td colspan="9" class="dim" style="text-align:center; padding:40px;">Polling… first signals land in ~10 seconds.</td></tr>'
+        : '<tr><td colspan="9" class="dim" style="text-align:center; padding:40px;">Feed idle. Press START above.</td></tr>';
       return;
     }
-    rows.innerHTML = d.signals.map(s => {
-      const edgeCls = s.edge > 0 ? 'pos' : (s.edge < 0 ? 'neg' : '');
-      const sideBg =
-        s.suggested_side === 'YES' ? 'rgba(52,211,153,.16); color:#34d399; border-color:rgba(52,211,153,.3)' :
-        s.suggested_side === 'NO'  ? 'rgba(248,113,113,.16); color:#f87171; border-color:rgba(248,113,113,.3)' :
-                                     'rgba(148,163,184,.1);  color:#9aa7c4; border-color:var(--border)';
+
+    // Sort: actionable first, then by confidence, then by edge magnitude
+    sigs.sort((a, b) => {
+      const order = s => (s.suggested_side === 'flat' ? 3 : (s.confidence === 'high' ? 0 : s.confidence === 'med' ? 1 : 2));
+      return order(a) - order(b) || Math.abs(b.edge) - Math.abs(a.edge);
+    });
+
+    rows.innerHTML = sigs.map(s => {
+      const actionable = s.suggested_side !== 'flat';
       const ttc = (s.minutes_to_close === null || !isFinite(s.minutes_to_close))
         ? '—' : (s.minutes_to_close >= 60 ? `${(s.minutes_to_close/60).toFixed(1)}h` : `${s.minutes_to_close.toFixed(0)}m`);
+      const entryPrice = s.suggested_side === 'YES' ? s.yes_ask : (s.suggested_side === 'NO' ? 1 - s.yes_bid : s.mid);
+      const recCell = actionable
+        ? `<div class="bet-rec">
+             <div class="headline">Bet <strong>$${s.suggested_notional.toFixed(2)}</strong> on ${sidePill(s.suggested_side)}</div>
+             <div class="detail">${s.rationale}</div>
+           </div>`
+        : `<div class="bet-rec">
+             ${sidePill('flat')}
+             <div class="detail">${s.rationale}</div>
+           </div>`;
+      const epCls = s.expected_profit > 0 ? 'pos' : (s.expected_profit < 0 ? 'neg' : 'dim');
+      const epText = actionable
+        ? `<span class="${epCls}">${s.expected_profit>=0?'+':''}$${s.expected_profit.toFixed(2)}</span>`
+        : '—';
       return `<tr>
         <td>
-          <div class="mono" style="font-size:12px;">${s.ticker}</div>
-          <div class="dim" style="font-size:11px; max-width:340px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${s.title || ''}</div>
+          <div class="mono" style="font-size:12px; margin-bottom:2px;">${s.ticker}</div>
+          <div class="dim" style="font-size:12px; max-width:320px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${s.title || ''}</div>
         </td>
         <td><span class="pill">${s.genre}</span></td>
-        <td class="num">${(s.yes_bid*100).toFixed(0)}¢</td>
-        <td class="num">${(s.yes_ask*100).toFixed(0)}¢</td>
+        <td>${confPill(s.confidence)}</td>
+        <td>${recCell}</td>
+        <td class="num">${(entryPrice*100).toFixed(0)}¢</td>
         <td class="num">${(s.ensemble_prob*100).toFixed(1)}%</td>
-        <td class="num ${edgeCls}">${(s.edge>=0?'+':'')}${(s.edge*100).toFixed(1)}%</td>
-        <td class="num">${(s.dispersion*100).toFixed(1)}%</td>
-        <td><span class="pill" style="background:${sideBg};">${s.suggested_side}</span></td>
-        <td class="num">${s.suggested_notional>0 ? '$'+s.suggested_notional.toFixed(2) : '—'}</td>
+        <td class="num">${actionable ? '$'+s.suggested_notional.toFixed(2) : '—'}</td>
+        <td class="num">${epText}</td>
         <td class="num dim">${ttc}</td>
       </tr>`;
     }).join('');
-  } catch (e) {}
+  } catch(e){}
+
+  setTimeout(refresh, 3000);
 }
 
-async function tick() {
-  await refreshStatus();
-  await refreshSignals();
-  setTimeout(tick, 3000);
-}
-
-startBtn.addEventListener('click', async () => {
-  showBanner('Starting feed and verifying auth against Kalshi…', 'info');
-  startBtn.disabled = true;
+toggle.addEventListener('click', async () => {
+  const isRunning = toggle.classList.contains('btn-stop');
+  toggle.disabled = true;
   try {
-    const r = await fetch('/api/live/start', { method: 'POST' });
-    const j = await r.json();
-    if (j.ok) {
-      const auth = j.check?.auth_ok ? ', auth OK' : '';
-      showBanner(`<b style="color:#34d399;">Connected to Kalshi.</b> <span class="dim">Public OK${auth}. Polling started — signals should appear within 10 seconds.</span>`, 'ok');
-      setTimeout(hideBanner, 6000);
+    if (isRunning) {
+      await fetch('/api/live/stop', { method: 'POST' });
+      showBanner('Feed stopped.', 'info');
+      setTimeout(hideBanner, 2500);
     } else {
-      showBanner(`<b style="color:#f87171;">Failed to start:</b> ${j.error}`, 'bad');
+      showBanner('Connecting to Kalshi…', 'info');
+      const r = await fetch('/api/live/start', { method: 'POST' });
+      const j = await r.json();
+      if (j.ok) {
+        showBanner(`<b style="color:var(--ok);">Connected.</b> First signals will appear in ~10 seconds.`, 'ok');
+        setTimeout(hideBanner, 4000);
+      } else {
+        showBanner(`<b style="color:var(--bad);">Failed:</b> ${j.error}`, 'bad');
+      }
     }
   } catch (e) {
-    showBanner(`<b style="color:#f87171;">Error:</b> ${e.message}`, 'bad');
-  } finally { startBtn.disabled = false; }
+    showBanner(`<b style="color:var(--bad);">Error:</b> ${e.message}`, 'bad');
+  } finally { toggle.disabled = false; }
 });
-stopBtn.addEventListener('click', async () => {
-  await fetch('/api/live/stop', { method: 'POST' });
-  showBanner('Feed stopped.', 'info');
-  setTimeout(hideBanner, 3000);
-});
+
 authBtn.addEventListener('click', async () => {
-  showBanner('Checking credentials against Kalshi…', 'info');
+  showBanner('Checking credentials…', 'info');
   try {
     const d = await KB.fetchJSON('/api/live/auth_check');
-    let msg = `<div><b>Base URL:</b> <code>${d.base_url}</code></div>`;
+    let msg = `<div><b>Base:</b> <code>${d.base_url}</code></div>`;
     msg += `<div><b>Key ID:</b> <code>${d.api_key_id || '(unset)'}</code> · <b>PEM:</b> ${d.has_private_key ? 'found' : 'missing'}</div>`;
-    msg += `<div><b>Public /markets:</b> ${d.public_ok ? '<span style="color:#34d399;">ok</span> — '+d.markets_visible+' market(s)' : '<span style="color:#f87171;">fail</span> — <code>'+d.public_error+'</code>'}</div>`;
+    msg += `<div><b>Public:</b> ${d.public_ok ? '<span style="color:var(--ok);">ok</span> — '+d.markets_visible+' markets visible' : '<span style="color:var(--bad);">fail</span> — '+d.public_error+''}</div>`;
     if (d.auth_ok !== undefined) {
-      msg += `<div><b>Auth /portfolio/balance:</b> ${d.auth_ok ? '<span style="color:#34d399;">ok</span>' : '<span style="color:#f87171;">fail</span> — <code>'+d.auth_error+'</code>'}</div>`;
+      msg += `<div><b>Auth:</b> ${d.auth_ok ? '<span style="color:var(--ok);">ok</span>' : '<span style="color:var(--bad);">fail</span> — '+d.auth_error}</div>`;
     }
-    showBanner(msg, d.auth_ok || d.public_ok ? 'ok' : 'bad');
-  } catch (e) {
-    showBanner(`<b style="color:#f87171;">Check failed:</b> ${e.message}`, 'bad');
-  }
+    showBanner(msg, (d.auth_ok || d.public_ok) ? 'ok' : 'bad');
+  } catch (e) { showBanner(`<b style="color:var(--bad);">Failed:</b> ${e.message}`, 'bad'); }
 });
 
-tick();
+refresh();
 </script>
 {% endblock %}

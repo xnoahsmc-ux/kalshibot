@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block title %}My trades · Kalshi Bot{% endblock %}
+{% block main %}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">My trades</h1>
+    <p class="page-sub">Current positions and open/closed orders from your Kalshi account.</p>
+  </div>
+</div>
+
+<div class="grid-4" style="margin-bottom:24px;">
+  <div class="kpi" id="kpiRealized"><div class="label">Realized PnL</div><div class="value">—</div><div class="sub">closed positions</div></div>
+  <div class="kpi" id="kpiUnreal"><div class="label">Unrealized PnL</div><div class="value">—</div><div class="sub">open positions</div></div>
+  <div class="kpi" id="kpiOpen"><div class="label">Open positions</div><div class="value">0</div><div class="sub">markets you hold</div></div>
+  <div class="kpi" id="kpiOrders"><div class="label">Recent orders</div><div class="value">0</div><div class="sub">last 100</div></div>
+</div>
+
+<h2>Positions</h2>
+<div class="tablewrap">
+  <table>
+    <thead><tr>
+      <th>Market</th><th>Side</th><th class="num">Contracts</th>
+      <th class="num">Avg entry</th><th class="num">Current</th>
+      <th class="num">Realized</th><th class="num">Unrealized</th>
+    </tr></thead>
+    <tbody id="posRows"><tr><td colspan="7" class="dim" style="text-align:center; padding:40px;">Loading…</td></tr></tbody>
+  </table>
+</div>
+
+<div class="spacer"></div>
+<h2>Recent orders</h2>
+<div class="tablewrap">
+  <table>
+    <thead><tr>
+      <th>Time</th><th>Market</th><th>Side</th><th>Action</th>
+      <th class="num">Count</th><th class="num">Price</th><th>Status</th>
+    </tr></thead>
+    <tbody id="ordRows"><tr><td colspan="7" class="dim" style="text-align:center; padding:40px;">Loading…</td></tr></tbody>
+  </table>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+function cents(v) { return v == null ? '—' : (v >= 100 || v <= -100 ? '$'+(v/100).toFixed(2) : v + '¢'); }
+function money(v) {
+  if (v == null) return '—';
+  const sign = v >= 0 ? '+' : '';
+  return `<span class="${v>=0?'pos':'neg'}">${sign}$${(v/100).toFixed(2)}</span>`;
+}
+function sidePill(s) {
+  const key = (s || '').toLowerCase();
+  const cls = key === 'yes' ? 'side-yes' : key === 'no' ? 'side-no' : 'side-flat';
+  return `<span class="pill ${cls}">${(s||'—').toUpperCase()}</span>`;
+}
+
+async function load() {
+  try {
+    const d = await KB.fetchJSON('/api/trades');
+    const positions = d.positions || [];
+    const orders = d.orders || [];
+
+    let realized = 0, unrealized = 0;
+    positions.forEach(p => {
+      realized   += (p.realized_pnl || 0);
+      unrealized += (p.total_traded - (p.position * (p.market_exposure||0))) || 0;
+    });
+    document.getElementById('kpiRealized').innerHTML =
+      `<div class="label">Realized PnL</div><div class="value ${realized>=0?'good':'bad'}">${realized>=0?'+':''}$${(realized/100).toFixed(2)}</div><div class="sub">closed positions</div>`;
+    document.getElementById('kpiUnreal').innerHTML =
+      `<div class="label">Unrealized PnL</div><div class="value ${unrealized>=0?'good':'bad'}">${unrealized>=0?'+':''}$${(unrealized/100).toFixed(2)}</div><div class="sub">open positions</div>`;
+    document.getElementById('kpiOpen').innerHTML =
+      `<div class="label">Open positions</div><div class="value">${positions.filter(p=>p.position!==0).length}</div><div class="sub">markets you hold</div>`;
+    document.getElementById('kpiOrders').innerHTML =
+      `<div class="label">Recent orders</div><div class="value">${orders.length}</div><div class="sub">last 100</div>`;
+
+    const posRows = document.getElementById('posRows');
+    if (!positions.length) {
+      posRows.innerHTML = `<tr><td colspan="7" class="dim" style="text-align:center; padding:40px;">No positions yet. ${d.positions_error || ''}</td></tr>`;
+    } else {
+      posRows.innerHTML = positions.map(p => `
+        <tr>
+          <td class="mono">${p.ticker}</td>
+          <td>${sidePill(p.position > 0 ? 'YES' : (p.position < 0 ? 'NO' : '—'))}</td>
+          <td class="num">${Math.abs(p.position || 0)}</td>
+          <td class="num">${cents(p.average_price)}</td>
+          <td class="num">${cents(p.market_exposure)}</td>
+          <td class="num">${money(p.realized_pnl)}</td>
+          <td class="num">${money((p.total_traded||0) - (p.fees_paid||0))}</td>
+        </tr>
+      `).join('');
+    }
+
+    const ordRows = document.getElementById('ordRows');
+    if (!orders.length) {
+      ordRows.innerHTML = `<tr><td colspan="7" class="dim" style="text-align:center; padding:40px;">No orders. ${d.orders_error || ''}</td></tr>`;
+    } else {
+      ordRows.innerHTML = orders.slice(0, 50).map(o => `
+        <tr>
+          <td class="dim" style="font-size:12px;">${o.created_time ? new Date(o.created_time).toLocaleString() : '—'}</td>
+          <td class="mono">${o.ticker}</td>
+          <td>${sidePill(o.side)}</td>
+          <td>${o.action || '—'}</td>
+          <td class="num">${o.count || '—'}</td>
+          <td class="num">${cents(o.yes_price || o.no_price)}</td>
+          <td><span class="pill">${o.status || '—'}</span></td>
+        </tr>
+      `).join('');
+    }
+  } catch (e) {
+    document.getElementById('posRows').innerHTML =
+      `<tr><td colspan="7" class="dim" style="text-align:center; padding:40px;">Error loading: ${e.message}</td></tr>`;
+  }
+  setTimeout(load, 8000);
+}
+load();
+</script>
+{% endblock %}
