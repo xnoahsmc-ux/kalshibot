@@ -3,62 +3,172 @@
 {% block main %}
 <div class="page-head">
   <div>
-    <h1 class="page-title">Live suggestions</h1>
-    <p class="page-sub">Markets the current ensemble would most want to trade, ranked by backtested edge.</p>
+    <h1 class="page-title">Live Kalshi feed</h1>
+    <p class="page-sub">Polls Kalshi every few seconds, applies the ensemble, and ranks suggestions.</p>
   </div>
   <div class="row">
-    <span class="badge warn">dry-run preview</span>
+    <button id="startBtn">Start feed</button>
+    <button id="stopBtn" class="btn-ghost">Stop</button>
+    <button id="authBtn" class="btn-ghost">Auth check</button>
   </div>
 </div>
 
-{% if not has_report %}
-  <div class="empty"><h3>No backtest yet</h3>
-    <a class="btn" href="{{ url_for('backtest_page') }}">Start a backtest</a></div>
-{% else %}
+<div id="banner" style="display:none;"></div>
+
+<div class="kpi-grid" id="liveKpis"></div>
+
 <div class="tablewrap">
   <table>
     <thead><tr>
-      <th>Market</th><th>Genre</th>
-      <th class="num">Backtest PnL</th><th class="num">Sharpe</th>
-      <th class="num">Hit rate</th><th>Suggested side</th>
+      <th>Market</th>
+      <th>Genre</th>
+      <th class="num">Bid</th>
+      <th class="num">Ask</th>
+      <th class="num">Ensemble P</th>
+      <th class="num">Edge</th>
+      <th class="num">Dispersion</th>
+      <th>Suggested</th>
+      <th class="num">Notional</th>
+      <th class="num">Close in</th>
     </tr></thead>
-    <tbody id="rows"><tr><td colspan="6" class="dim">Loading…</td></tr></tbody>
+    <tbody id="rows"><tr><td colspan="10" class="dim">Press Start feed to begin polling.</td></tr></tbody>
   </table>
 </div>
+
 <div class="spacer"></div>
-<div class="card">
-  <div class="card-head"><div><div class="card-title">How to go live</div></div></div>
-  <p class="dim" style="font-size:13px; line-height:1.7;">
-    When you run <code>kalshibot run</code> the live loop pulls open markets
-    every <code>POLL_SECONDS</code>, rebuilds per-market history, asks the
-    ensemble for a probability + dispersion, applies the dispersion-damped
-    Kelly fraction, and (unless <code>DRY_RUN=true</code>) sends a limit
-    order at the current quote, subject to the per-genre exposure cap.
-  </p>
+<div class="grid-2">
+  <div class="card">
+    <div class="card-head"><div><div class="card-title">How this works</div></div></div>
+    <p class="dim" style="font-size:13px; line-height:1.7;">
+      The live feed pulls open markets from Kalshi, appends a rolling
+      MarketHistory per ticker, and asks the saved ensemble for a
+      probability. Suggestions are gated by minimum edge, dispersion cap,
+      and per-genre exposure (configured in <code>.env</code>). This page
+      is read-only preview; actual order placement happens only when you
+      run <code>kalshibot run</code> with <code>DRY_RUN=false</code>.
+    </p>
+  </div>
+  <div class="card">
+    <div class="card-head"><div><div class="card-title">Troubleshooting</div></div></div>
+    <ul class="dim" style="font-size:13px; line-height:1.7; padding-left:20px;">
+      <li>Click <b>Auth check</b> to verify your key ID + PEM path load correctly.</li>
+      <li>401 → signature rejected. Re-check that <code>KALSHI_API_KEY_ID</code> matches the PEM you issued.</li>
+      <li>403 <i>Host not in allowlist</i> → your network egress is blocked; try from a normal connection.</li>
+      <li>No signals → run a backtest first; without a saved ensemble every signal stays flat.</li>
+    </ul>
+  </div>
 </div>
-{% endif %}
 {% endblock %}
 
 {% block scripts %}
-{% if has_report %}
 <script>
-(async function () {
-  const rows = await KB.fetchJSON('/api/suggestions');
-  const tbody = document.getElementById('rows');
-  if (!rows.length) { tbody.innerHTML = '<tr><td colspan="6" class="dim">No markets yet</td></tr>'; return; }
-  tbody.innerHTML = rows.map(r => {
-    const sideCls = r.total >= 0 ? 'pos' : 'neg';
-    const side = r.total >= 0 ? 'lean YES' : 'lean NO';
+const startBtn = document.getElementById('startBtn');
+const stopBtn  = document.getElementById('stopBtn');
+const authBtn  = document.getElementById('authBtn');
+const rows     = document.getElementById('rows');
+const banner   = document.getElementById('banner');
+const kpiBox   = document.getElementById('liveKpis');
+
+function showBanner(msg, kind) {
+  banner.style.display = 'block';
+  banner.innerHTML = `<div class="card" style="border-color:${kind==='bad'?'#f87171':(kind==='ok'?'#34d399':'#7dd3fc')}; margin-bottom:14px;">${msg}</div>`;
+}
+function hideBanner() { banner.style.display = 'none'; }
+
+async function refreshStatus() {
+  const st = await KB.fetchJSON('/api/live/status');
+  kpiBox.innerHTML = [
+    `<div class="kpi"><div class="label">Feed</div>
+      <div class="value ${st.running?'good':''}">${st.running ? 'running' : 'idle'}</div></div>`,
+    `<div class="kpi"><div class="label">Configured</div>
+      <div class="value">${st.configured ? 'yes' : 'no'}</div>
+      <div class="sub">${st.env} — ${st.base_url}</div></div>`,
+    `<div class="kpi"><div class="label">Markets polled</div>
+      <div class="value">${st.markets_seen || 0}</div>
+      <div class="sub">${st.polls || 0} polls total</div></div>`,
+    `<div class="kpi ${st.has_report?'':'bad'}"><div class="label">Ensemble</div>
+      <div class="value">${st.has_report ? 'loaded' : 'none'}</div>
+      <div class="sub">${st.has_report ? 'ready' : 'run a backtest first'}</div></div>`,
+  ].join('');
+  if (st.last_error) showBanner(`<b class="neg">Last error:</b> <code>${st.last_error}</code>`, 'bad');
+}
+
+async function refreshSignals() {
+  const d = await KB.fetchJSON('/api/live/signals');
+  if (!d.signals.length) {
+    rows.innerHTML = d.running
+      ? '<tr><td colspan="10" class="dim">Waiting for first poll…</td></tr>'
+      : '<tr><td colspan="10" class="dim">Feed idle. Press Start.</td></tr>';
+    return;
+  }
+  rows.innerHTML = d.signals.map(s => {
+    const edgeCls = s.edge > 0 ? 'pos' : (s.edge < 0 ? 'neg' : '');
+    const sideBg =
+      s.suggested_side === 'YES' ? 'rgba(52,211,153,.16); color:#34d399; border-color:rgba(52,211,153,.3)' :
+      s.suggested_side === 'NO'  ? 'rgba(248,113,113,.16); color:#f87171; border-color:rgba(248,113,113,.3)' :
+                                   'rgba(148,163,184,.1);  color:#9aa7c4; border-color:var(--border)';
+    const ttc = s.minutes_to_close === null || !isFinite(s.minutes_to_close)
+      ? '—' : (s.minutes_to_close >= 60 ? `${(s.minutes_to_close/60).toFixed(1)}h` : `${s.minutes_to_close.toFixed(0)}m`);
     return `<tr>
-      <td class="mono">${r.market}</td>
-      <td><span class="pill">${r.genre}</span></td>
-      <td class="num ${r.total >= 0 ? 'pos' : 'neg'}">${KB.fmt.money(r.total)}</td>
-      <td class="num ${r.sharpe >= 0 ? 'pos' : 'neg'}">${KB.fmt.num2(r.sharpe)}</td>
-      <td class="num">${KB.fmt.pct(r.hit_rate)}</td>
-      <td><span class="pill" style="background: ${r.total>=0?'rgba(52,211,153,.14)':'rgba(248,113,113,.14)'}; color: ${r.total>=0?'#34d399':'#f87171'}; border-color: ${r.total>=0?'rgba(52,211,153,.3)':'rgba(248,113,113,.3)'};">${side}</span></td>
+      <td>
+        <div class="mono" style="font-size:12px;">${s.ticker}</div>
+        <div class="dim" style="font-size:11px; max-width:340px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${s.title || ''}</div>
+      </td>
+      <td><span class="pill">${s.genre}</span></td>
+      <td class="num">${(s.yes_bid*100).toFixed(0)}¢</td>
+      <td class="num">${(s.yes_ask*100).toFixed(0)}¢</td>
+      <td class="num">${(s.ensemble_prob*100).toFixed(1)}%</td>
+      <td class="num ${edgeCls}">${(s.edge>=0?'+':'')}${(s.edge*100).toFixed(1)}%</td>
+      <td class="num">${(s.dispersion*100).toFixed(1)}%</td>
+      <td><span class="pill" style="background:${sideBg};">${s.suggested_side}</span></td>
+      <td class="num">${s.suggested_notional>0 ? '$'+s.suggested_notional.toFixed(2) : '—'}</td>
+      <td class="num dim">${ttc}</td>
     </tr>`;
   }).join('');
-})();
+}
+
+async function tick() {
+  try { await refreshStatus(); await refreshSignals(); } catch(e) {}
+  setTimeout(tick, 3000);
+}
+
+startBtn.addEventListener('click', async () => {
+  showBanner('Starting feed and verifying auth…', 'info');
+  startBtn.disabled = true;
+  try {
+    const r = await fetch('/api/live/start', { method: 'POST' });
+    const j = await r.json();
+    if (j.ok) {
+      showBanner(`<b class="pos">Connected.</b> <span class="dim">Public OK${j.check?.auth_ok?', auth OK':''}. Polling started.</span>`, 'ok');
+      setTimeout(hideBanner, 4000);
+    } else {
+      showBanner(`<b class="neg">Failed to start:</b> ${j.error}`, 'bad');
+    }
+  } catch (e) {
+    showBanner(`<b class="neg">Error:</b> ${e.message}`, 'bad');
+  } finally { startBtn.disabled = false; }
+});
+stopBtn.addEventListener('click', async () => {
+  await fetch('/api/live/stop', { method: 'POST' });
+  showBanner('Feed stopped.', 'info');
+  setTimeout(hideBanner, 3000);
+});
+authBtn.addEventListener('click', async () => {
+  showBanner('Checking credentials…', 'info');
+  try {
+    const d = await KB.fetchJSON('/api/live/auth_check');
+    let msg = `<div><b>Base:</b> <code>${d.base_url}</code></div>`;
+    msg += `<div><b>Key ID:</b> <code>${d.api_key_id || '(unset)'}</code> · <b>PEM:</b> ${d.has_private_key ? 'found' : 'missing'}</div>`;
+    msg += `<div><b>Public /markets:</b> ${d.public_ok ? '<span class="pos">ok</span> — '+d.markets_visible+' market(s)' : '<span class="neg">fail</span> — <code>'+d.public_error+'</code>'}</div>`;
+    if (d.auth_ok !== undefined) {
+      msg += `<div><b>Auth /portfolio/balance:</b> ${d.auth_ok ? '<span class="pos">ok</span>' : '<span class="neg">fail</span> — <code>'+d.auth_error+'</code>'}</div>`;
+    }
+    showBanner(msg, d.auth_ok || d.public_ok ? 'ok' : 'bad');
+  } catch (e) {
+    showBanner(`<b class="neg">Check failed:</b> ${e.message}`, 'bad');
+  }
+});
+
+tick();
 </script>
-{% endif %}
 {% endblock %}

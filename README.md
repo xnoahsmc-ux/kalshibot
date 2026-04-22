@@ -49,13 +49,44 @@ kalshibot web --port 8080 --auto-backtest
 
 Then open http://127.0.0.1:8080.
 
+## Feeding in live Kalshi data
+
+1. In Kalshi (Account → API Keys) create a new key. Kalshi gives you a UUID
+   **Key ID** and a **PEM private key** file.
+2. Save the PEM somewhere in the project — e.g. `secrets/kalshi_private_key.pem`.
+3. Copy `.env.example` to `.env` and fill in:
+   ```
+   KALSHI_ENV=prod
+   KALSHI_API_KEY_ID=<your-uuid>
+   KALSHI_API_PRIVATE_KEY_PATH=secrets/kalshi_private_key.pem
+   ```
+4. Verify credentials with the CLI:
+   ```bash
+   kalshibot auth-check
+   ```
+   You should see `Public /markets OK — N markets visible` and
+   `Auth /portfolio/balance OK`.
+5. Pull historical candles for real Kalshi markets and backtest on them:
+   ```bash
+   kalshibot fetch-history --markets 24 --lookback-hours 72
+   kalshibot backtest-live
+   ```
+6. Start the web UI and open the **Live** page. Click **Start feed** — the
+   server will begin polling Kalshi every `POLL_SECONDS` and render
+   live-updating signals with suggested YES/NO/flat calls.
+7. Flip `KALSHIBOT_DRY_RUN=false` and run `kalshibot run` to actually submit
+   orders. Start with a tiny `KALSHIBOT_MAX_POSITION_USD` and a high
+   `KALSHIBOT_MIN_EDGE` while you get comfortable.
+
 ## Other commands
 
 ```bash
-kalshibot backtest --markets 32   # CLI backtest, print tables
-kalshibot dashboard --serve       # self-contained HTML dashboard
-cp .env.example .env              # edit credentials for live trading
-kalshibot run                     # live trade loop (dry-run by default)
+kalshibot backtest --markets 32    # synthetic-data backtest
+kalshibot dashboard --serve        # self-contained HTML dashboard
+kalshibot auth-check               # verify Kalshi credentials
+kalshibot fetch-history            # pull real historical candles
+kalshibot backtest-live            # backtest on the fetched real data
+kalshibot run                      # live trade loop (dry-run by default)
 ```
 
 The web UI (`kalshibot web`) serves a Flask dashboard at

@@ -21,9 +21,12 @@ class Config:
     bankroll_usd: float
     min_edge: float
     poll_seconds: int
+    base_url_override: str | None = None
 
     @property
     def base_url(self) -> str:
+        if self.base_url_override:
+            return self.base_url_override
         if self.env == "prod":
             return "https://api.elections.kalshi.com/trade-api/v2"
         return "https://demo-api.kalshi.co/trade-api/v2"
@@ -45,6 +48,7 @@ def load_config() -> Config:
         bankroll_usd=float(_get("KALSHIBOT_BANKROLL_USD", "1000") or 1000),
         min_edge=float(_get("KALSHIBOT_MIN_EDGE", "0.03") or 0.03),
         poll_seconds=int(_get("KALSHIBOT_POLL_SECONDS", "30") or 30),
+        base_url_override=_get("KALSHI_BASE_URL"),
     )
 
 

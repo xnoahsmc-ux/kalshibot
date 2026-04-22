@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from ..analytics import BacktestReport
+from ..live import LiveFeed
 
 
 @dataclass
@@ -31,7 +32,16 @@ class AppState:
         self._report: BacktestReport | None = None
         self._jobs: dict[str, JobStatus] = {}
         self._lock = threading.Lock()
+        self._live: LiveFeed | None = None
         self._load_if_exists()
+
+    # --- live feed ---------------------------------------------------------
+    def live(self) -> LiveFeed | None:
+        return self._live
+
+    def set_live(self, feed: LiveFeed | None) -> None:
+        with self._lock:
+            self._live = feed
 
     def _load_if_exists(self) -> None:
         if self.report_path.exists():

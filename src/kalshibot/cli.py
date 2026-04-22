@@ -160,6 +160,83 @@ def run():
     run_forever(cfg, report.combo)
 
 
+@app.command("auth-check")
+def auth_check_cmd():
+    """Verify your Kalshi credentials work. Prints what succeeded/failed."""
+    from .kalshi_client import KalshiClient
+    cfg = load_config()
+    console.print(f"[cyan]Base URL:[/cyan] {cfg.base_url}")
+    console.print(f"[cyan]Key ID:[/cyan]   {cfg.api_key_id or '(unset)'}")
+    console.print(f"[cyan]PEM path:[/cyan] {cfg.api_private_key_path or '(unset)'}")
+    client = KalshiClient(cfg)
+    result = client.auth_check()
+    if result.get("public_ok"):
+        console.print(f"[green]Public /markets OK[/green] — {result['markets_visible']} market(s) visible")
+    else:
+        console.print(f"[red]Public /markets failed:[/red] {result.get('public_error')}")
+        return
+    if result.get("auth_ok"):
+        console.print(f"[green]Auth /portfolio/balance OK[/green]")
+        console.print(result.get("balance"))
+    else:
+        console.print(f"[red]Auth failed:[/red] {result.get('auth_error')}")
+
+
+@app.command("fetch-history")
+def fetch_history_cmd(
+    markets: int = typer.Option(16, help="How many live markets to fetch history for"),
+    lookback_hours: int = typer.Option(72),
+    save: Path = typer.Option(Path("real_universe.pkl")),
+):
+    """Pull historical candlesticks from Kalshi for N open markets and save."""
+    import pickle
+    from .history_fetch import fetch_universe
+    from .kalshi_client import KalshiClient
+    cfg = load_config()
+    client = KalshiClient(cfg)
+    console.print(f"[cyan]Fetching up to {markets} markets' history from {cfg.base_url}[/cyan]")
+    universe = fetch_universe(client, limit=markets, lookback_hours=lookback_hours)
+    console.print(f"[green]Got {len(universe)} markets with usable history[/green]")
+    save.write_bytes(pickle.dumps(universe))
+    console.print(f"[dim]Saved to {save}[/dim]")
+
+
+@app.command("backtest-live")
+def backtest_live_cmd(
+    universe_path: Path = typer.Option(Path("real_universe.pkl"),
+                                        help="From kalshibot fetch-history"),
+    top_k: int = typer.Option(30),
+):
+    """Backtest all strategies on REAL Kalshi history previously fetched."""
+    import pickle
+    from .analytics import build_report
+    from .backtester import evaluate_all, stack_pnls, stack_probs
+    from .combiner import best_combination
+    if not universe_path.exists():
+        console.print(f"[red]{universe_path} not found. Run `kalshibot fetch-history` first.[/red]")
+        raise typer.Exit(1)
+    universe = pickle.loads(universe_path.read_bytes())
+    console.print(f"[cyan]Loaded {len(universe)} real markets[/cyan]")
+    strats = all_strategies()
+    evals = evaluate_all(strats, universe)
+    pnl = stack_pnls(evals)
+    probs = stack_probs(evals)
+    outcomes_bars = []
+    for h in universe:
+        if len(h.df) == 0:
+            continue
+        y = 1.0 if h.mid.iloc[-1] >= 0.5 else 0.0
+        outcomes_bars.extend([y] * len(h.df))
+    import pandas as pd
+    outcomes = pd.Series(outcomes_bars[:len(probs)])
+    combo = best_combination(pnl, probs, outcomes, top_k=top_k)
+    report = build_report(evals, [h.ticker for h in universe], combo)
+    Path("backtest_report.pkl").write_bytes(pickle.dumps(report))
+    console.print(f"[green]Ensemble Sharpe: {combo.sharpe:+.2f}  "
+                  f"Total PnL: {report.equity_curve.iloc[-1]:+.4f}[/green]")
+    console.print("[dim]Saved to backtest_report.pkl. Start the web UI or `kalshibot run`.[/dim]")
+
+
 @app.command()
 def web(
     host: str = typer.Option("127.0.0.1"),

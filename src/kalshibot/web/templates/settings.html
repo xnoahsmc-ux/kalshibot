@@ -48,6 +48,19 @@
   </div>
 
   <div class="card">
+    <div class="card-head"><div><div class="card-title">Getting Kalshi API credentials</div>
+      <div class="card-sub">Required for live data</div></div></div>
+    <ol class="dim" style="font-size:13px; line-height:1.7; padding-left:20px;">
+      <li>Sign in at kalshi.com, go to <b>Account → API Keys</b>.</li>
+      <li>Create a new key. You'll get a UUID (the <b>Key ID</b>) and a PEM file.</li>
+      <li>Save the PEM to <code>secrets/kalshi_private_key.pem</code> in this folder.</li>
+      <li>Put the Key ID in <code>.env</code> as <code>KALSHI_API_KEY_ID</code>.</li>
+      <li>Restart the server, then on the <b>Live</b> page click <b>Auth check</b>.</li>
+    </ol>
+    <p class="hint">Credentials are read from environment variables on startup; this
+      page just helps you build the .env block. Nothing is written to disk by the server.</p>
+  </div>
+  <div class="card" style="grid-column: span 2;">
     <div class="card-head"><div><div class="card-title">Suggested .env</div>
       <div class="card-sub">Copy into your local .env file</div></div></div>
     {% if saved %}

@@ -228,7 +228,94 @@ def create_app(state: AppState | None = None) -> Flask:
     @app.route("/live")
     def live_page() -> str:
         r = state.report
-        return render_template("live.html", page="live", has_report=r is not None)
+        feed = state.live()
+        live_status = feed.status() if feed else None
+        return render_template("live.html", page="live", has_report=r is not None,
+                               live_status=live_status)
+
+    @app.route("/api/live/status")
+    def api_live_status():
+        feed = state.live()
+        if feed is None:
+            from ..config import load_config
+            cfg = load_config()
+            return jsonify({
+                "configured": bool(cfg.api_key_id and cfg.api_private_key_path),
+                "running": False,
+                "env": cfg.env,
+                "base_url": cfg.base_url,
+                "has_report": state.report is not None,
+            })
+        st = feed.status()
+        from ..config import load_config
+        cfg = load_config()
+        return jsonify({
+            "configured": bool(cfg.api_key_id and cfg.api_private_key_path),
+            "running": st.running,
+            "env": cfg.env,
+            "base_url": cfg.base_url,
+            "last_poll_at": st.last_poll_at,
+            "last_error": st.last_error,
+            "markets_seen": st.markets_seen,
+            "polls": st.polls,
+            "has_report": state.report is not None,
+        })
+
+    @app.route("/api/live/start", methods=["POST"])
+    def api_live_start():
+        from ..config import load_config
+        cfg = load_config()
+        if not (cfg.api_key_id and cfg.api_private_key_path):
+            return jsonify({"ok": False,
+                            "error": "Missing KALSHI_API_KEY_ID or KALSHI_API_PRIVATE_KEY_PATH. "
+                                     "Fill them into your .env then restart the server."}), 400
+        from ..kalshi_client import KalshiClient
+        from ..live import LiveFeed
+        client = KalshiClient(cfg)
+        combo = state.report.combo if state.report is not None else None
+        feed = state.live() or LiveFeed(cfg=cfg, combo=combo, client=client)
+        if combo is not None:
+            feed.set_combination(combo)
+        # Do a synchronous sanity check so we return a useful error if auth fails
+        try:
+            check = client.auth_check()
+        except Exception as e:
+            return jsonify({"ok": False, "error": f"Auth check raised: {e}"}), 500
+        if not check.get("public_ok"):
+            return jsonify({"ok": False, "error": check.get("public_error", "network error"),
+                            "check": check}), 502
+        feed.start()
+        state.set_live(feed)
+        return jsonify({"ok": True, "check": check})
+
+    @app.route("/api/live/stop", methods=["POST"])
+    def api_live_stop():
+        feed = state.live()
+        if feed:
+            feed.stop()
+        return jsonify({"ok": True})
+
+    @app.route("/api/live/signals")
+    def api_live_signals():
+        feed = state.live()
+        if feed is None:
+            return jsonify({"signals": [], "running": False})
+        sigs = feed.signals()
+        return jsonify({
+            "running": feed.status().running,
+            "signals": [s.__dict__ for s in sigs],
+        })
+
+    @app.route("/api/live/auth_check")
+    def api_live_auth_check():
+        from ..config import load_config
+        from ..kalshi_client import KalshiClient
+        cfg = load_config()
+        client = KalshiClient(cfg)
+        try:
+            return jsonify(client.auth_check())
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
 
     @app.route("/settings", methods=["GET", "POST"])
     def settings_page():
