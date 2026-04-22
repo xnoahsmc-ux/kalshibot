@@ -48,4 +48,14 @@ if not exist ".installed" (
 )
 
 set PYTHONPATH=src
+echo.
+echo ============================================================
+echo Starting Kalshibot at http://127.0.0.1:8080
+echo Leave this window open while you use the site.
+echo Press Ctrl+C here to stop.
+echo ============================================================
+echo.
 %PY% -m kalshibot.cli web --port 8080 --auto-backtest %*
+echo.
+echo The server exited. Scroll up to see any error messages.
+pause

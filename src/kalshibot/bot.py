@@ -46,7 +46,7 @@ def _minutes_to_close(m: dict) -> float:
         return float("inf")
     try:
         ct = pd.to_datetime(close, utc=True)
-        now = pd.Timestamp.utcnow().tz_localize("UTC")
+        now = pd.Timestamp.now(tz="UTC")
         return max(0.0, (ct - now).total_seconds() / 60.0)
     except Exception:
         return float("inf")
@@ -104,7 +104,7 @@ class Trader:
         return mean, float(np.sqrt(var))
 
     def consider_market(self, m: dict) -> dict | None:
-        snap = snapshot_from_market(m, pd.Timestamp.utcnow().tz_localize(None))
+        snap = snapshot_from_market(m, pd.Timestamp.now())
         h = self.histories.setdefault(snap.ticker, MarketHistory(snap.ticker))
         h.append(snap)
         if len(h.df) < 30:                # need warm-up
@@ -146,7 +146,7 @@ class Trader:
             "mid": round(mid, 4),
             "edge": round(edge, 4),
             "notional": round(notional, 2),
-            "ts": pd.Timestamp.utcnow().isoformat(),
+            "ts": pd.Timestamp.now(tz="UTC").isoformat(),
         }
         self.exposure_by_genre[genre] = used + notional
         self.trade_log.append(decision)
