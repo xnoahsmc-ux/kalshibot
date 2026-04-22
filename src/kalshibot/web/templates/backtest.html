@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}Run backtest · Kalshibot{% endblock %}
+{% block main %}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Run backtest</h1>
+    <p class="page-sub">Evaluate 130+ strategies, pick the best weighted combo, refresh the dashboard.</p>
+  </div>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-head"><div><div class="card-title">Configure</div>
+      <div class="card-sub">Kick off a new run</div></div></div>
+    <form method="post">
+      <div class="field">
+        <label>Number of synthetic markets</label>
+        <input name="markets" type="number" value="24" min="4" max="200" />
+      </div>
+      <div class="field">
+        <label>Top-K pre-filter</label>
+        <input name="top_k" type="number" value="30" min="5" max="100" />
+      </div>
+      <div class="field">
+        <label>Combination method</label>
+        <select name="method">
+          <option value="hybrid">Hybrid (Sharpe + Risk-Parity)</option>
+          <option value="sharpe">Sharpe-optimal</option>
+          <option value="risk_parity">Risk parity</option>
+        </select>
+      </div>
+      <div class="row">
+        <button type="submit">Run backtest</button>
+        <span class="hint">Typically finishes in under a minute.</span>
+      </div>
+    </form>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><div><div class="card-title">Current job</div>
+      <div class="card-sub">{% if job %}{{ job.id }}{% else %}none running{% endif %}</div></div></div>
+    {% if job %}
+      <div id="status"><span class="badge">{{ job.message }}</span></div>
+      <div class="spacer"></div>
+      <div class="progress"><span id="bar" style="width: {{ (job.progress*100)|round(0) }}%;"></span></div>
+      <div class="spacer"></div>
+      <div id="donebox" style="display:none;">
+        <a class="btn" href="{{ url_for('index') }}">Open dashboard</a>
+      </div>
+    {% else %}
+      <div class="hint">Start a backtest with the form on the left.</div>
+    {% endif %}
+  </div>
+</div>
+
+{% if recent %}
+<h2>Recent jobs</h2>
+<div class="tablewrap">
+  <table>
+    <thead><tr><th>ID</th><th>Kind</th><th>Progress</th><th>Status</th></tr></thead>
+    <tbody>
+    {% for j in recent %}
+      <tr>
+        <td class="mono">{{ j.id }}</td>
+        <td>{{ j.kind }}</td>
+        <td class="num">{{ '%d%%'|format((j.progress or 0)*100) }}</td>
+        <td>{{ j.message }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% endblock %}
+{% block scripts %}
+{% if job %}
+<script>
+(async function () {
+  const jid = "{{ job.id }}";
+  const bar = document.getElementById('bar');
+  const status = document.getElementById('status');
+  const done = document.getElementById('donebox');
+  async function tick() {
+    try {
+      const j = await KB.fetchJSON('/api/job/' + jid);
+      bar.style.width = Math.round(j.progress * 100) + '%';
+      const cls = j.error ? 'bad' : (j.finished ? 'ok' : 'warn');
+      status.innerHTML = `<span class="badge ${cls}">${j.message}</span>`;
+      if (j.finished) { done.style.display = 'block'; return; }
+    } catch (e) {}
+    setTimeout(tick, 700);
+  }
+  tick();
+})();
+</script>
+{% endif %}
+{% endblock %}

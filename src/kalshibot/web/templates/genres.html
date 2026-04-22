@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}Genres · Kalshibot{% endblock %}
+{% block main %}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Genres</h1>
+    <p class="page-sub">Which niches make money: sports, weather, politics, crypto, economy, and friends.</p>
+  </div>
+</div>
+
+{% if not has_report %}
+  <div class="empty">
+    <h3>No backtest yet</h3><p>Run a backtest to populate genre analytics.</p>
+    <a class="btn" href="{{ url_for('backtest_page') }}">Start a backtest</a>
+  </div>
+{% else %}
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-head">
+      <div><div class="card-title">Genre equity curves</div>
+           <div class="card-sub">Cumulative backtest PnL per genre</div></div>
+    </div>
+    <div class="chart-wrap big"><canvas id="gCurves"></canvas></div>
+  </div>
+  <div class="card">
+    <div class="card-head">
+      <div><div class="card-title">PnL vs. Sharpe</div>
+           <div class="card-sub">Trust genres with both</div></div>
+    </div>
+    <div class="chart-wrap big"><canvas id="gBars"></canvas></div>
+  </div>
+</div>
+
+<div class="spacer"></div>
+
+<div class="tablewrap">
+  <table>
+    <thead><tr>
+      <th>Genre</th><th class="num">Markets</th>
+      <th class="num">Total PnL</th><th class="num">Avg Sharpe</th>
+      <th class="num">Hit rate</th><th class="num">Worst DD</th>
+      <th>Best strategy in niche</th>
+    </tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        <td><span class="pill">{{ r.genre }}</span></td>
+        <td class="num">{{ r.n_markets|int }}</td>
+        <td class="num {% if r.total >= 0 %}pos{% else %}neg{% endif %}">{{ '%+.4f'|format(r.total) }}</td>
+        <td class="num {% if r.sharpe >= 0 %}pos{% else %}neg{% endif %}">{{ '%+.2f'|format(r.sharpe) }}</td>
+        <td class="num">{{ '%.1f%%'|format(r.hit_rate * 100) }}</td>
+        <td class="num neg">{{ '%+.4f'|format(r.max_dd) }}</td>
+        <td class="mono">{{ best_per_genre.get(r.genre, '—') }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if has_report %}
+<script>
+(async function () {
+  const [eq, g] = await Promise.all([
+    KB.fetchJSON('/api/genre_equity'), KB.fetchJSON('/api/genres')
+  ]);
+  const names = Object.keys(eq);
+  const labels = names.length ? eq[names[0]].x : [];
+  new Chart(document.getElementById('gCurves'), {
+    type: 'line',
+    data: { labels, datasets: names.map((n,i) =>
+      ({ ...KB.lineDataset(n, eq[n], KB.palette[i % KB.palette.length], 1), fill: false })) },
+    options: { maintainAspectRatio: false }
+  });
+  new Chart(document.getElementById('gBars'), {
+    type: 'bar',
+    data: { labels: g.labels, datasets: [
+      { label: 'Total PnL', data: g.totals,
+        backgroundColor: g.totals.map(v => v >= 0 ? 'rgba(52,211,153,.6)' : 'rgba(248,113,113,.6)'),
+        borderColor:     g.totals.map(v => v >= 0 ? '#34d399' : '#f87171'), borderWidth: 1 },
+      { label: 'Sharpe', data: g.sharpes, type: 'line',
+        borderColor: '#7dd3fc', backgroundColor: 'rgba(125,211,252,.15)',
+        pointRadius: 3, yAxisID: 'y1', tension: 0.2 },
+    ] },
+    options: { maintainAspectRatio: false,
+      scales: { y1: { position: 'right', grid: { drawOnChartArea: false } } } }
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}

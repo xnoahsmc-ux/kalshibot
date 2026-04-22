@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+{% block title %}Overview · Kalshibot{% endblock %}
+{% block main %}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Overview</h1>
+    <p class="page-sub">Ensemble performance across all backtested markets and genres.</p>
+  </div>
+  <div class="row">
+    <a class="btn" href="{{ url_for('backtest_page') }}">Run new backtest</a>
+  </div>
+</div>
+
+{% if not has_report %}
+  <div class="empty">
+    <h3>No backtest yet</h3>
+    <p>Run your first backtest to populate the dashboard with strategy, genre, and PnL analytics.</p>
+    <a class="btn" href="{{ url_for('backtest_page') }}">Start a backtest</a>
+  </div>
+{% else %}
+
+<div id="kpis" class="kpi-grid"></div>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-head">
+      <div>
+        <div class="card-title">Ensemble equity curve</div>
+        <div class="card-sub">Cumulative backtest PnL of the selected combination</div>
+      </div>
+      <span class="badge">simulated</span>
+    </div>
+    <div class="chart-wrap big"><canvas id="equity"></canvas></div>
+  </div>
+  <div class="card">
+    <div class="card-head">
+      <div>
+        <div class="card-title">Top strategy weights</div>
+        <div class="card-sub">What the optimizer chose</div>
+      </div>
+    </div>
+    <div class="chart-wrap big"><canvas id="weights"></canvas></div>
+  </div>
+</div>
+
+<div class="spacer"></div>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-head">
+      <div>
+        <div class="card-title">Per-genre equity</div>
+        <div class="card-sub">Where the ensemble actually makes money</div>
+      </div>
+    </div>
+    <div class="chart-wrap"><canvas id="genre_curves"></canvas></div>
+  </div>
+  <div class="card">
+    <div class="card-head">
+      <div>
+        <div class="card-title">Genre PnL &amp; Sharpe</div>
+        <div class="card-sub">Niche ranking</div>
+      </div>
+    </div>
+    <div class="chart-wrap"><canvas id="genres"></canvas></div>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+{% if has_report %}
+<script>
+(async function () {
+  const summary = await KB.fetchJSON('/api/summary');
+  const kpiEl = document.getElementById('kpis');
+  const totCls = summary.total_pnl >= 0 ? 'good' : 'bad';
+  const shCls  = summary.sharpe >= 0 ? 'good' : 'bad';
+  kpiEl.innerHTML = [
+    `<div class="kpi ${totCls}"><div class="label">Total PnL</div>
+      <div class="value ${totCls}">${KB.fmt.money(summary.total_pnl)}</div>
+      <div class="sub">${summary.n_markets} markets</div></div>`,
+    `<div class="kpi ${shCls}"><div class="label">Sharpe (ann.)</div>
+      <div class="value ${shCls}">${KB.fmt.num2(summary.sharpe)}</div>
+      <div class="sub">${summary.oos_sharpe !== null ? 'OOS ' + KB.fmt.num2(summary.oos_sharpe) : 'in-sample'}</div></div>`,
+    `<div class="kpi"><div class="label">Active strategies</div>
+      <div class="value">${summary.active_strategies}</div>
+      <div class="sub">of total universe</div></div>`,
+    `<div class="kpi"><div class="label">Best genre</div>
+      <div class="value">${summary.best_genre}</div>
+      <div class="sub">by risk-adj. return</div></div>`,
+  ].join('');
+
+  const [equity, weights, genreEq, genres] = await Promise.all([
+    KB.fetchJSON('/api/equity'),
+    KB.fetchJSON('/api/weights'),
+    KB.fetchJSON('/api/genre_equity'),
+    KB.fetchJSON('/api/genres'),
+  ]);
+
+  // Equity chart (ensemble + top strategies)
+  const names = Object.keys(equity);
+  const labels = names.length ? equity[names[0]].x : [];
+  new Chart(document.getElementById('equity'), {
+    type: 'line',
+    data: { labels, datasets: names.map((n, i) =>
+      KB.lineDataset(n, equity[n], KB.palette[i % KB.palette.length], i)) },
+    options: { maintainAspectRatio: false,
+               plugins: { legend: { display: true } },
+               interaction: { mode: 'index', intersect: false } }
+  });
+
+  // Weights horizontal bar
+  new Chart(document.getElementById('weights'), {
+    type: 'bar',
+    data: {
+      labels: weights.labels,
+      datasets: [{ label: 'Weight', data: weights.values,
+                   backgroundColor: 'rgba(52,211,153,.5)',
+                   borderColor: '#34d399', borderWidth: 1 }]
+    },
+    options: { maintainAspectRatio: false, indexAxis: 'y',
+               plugins: { legend: { display: false } } }
+  });
+
+  // Genre equity
+  const gNames = Object.keys(genreEq);
+  const gLabels = gNames.length ? genreEq[gNames[0]].x : [];
+  new Chart(document.getElementById('genre_curves'), {
+    type: 'line',
+    data: { labels: gLabels, datasets: gNames.map((n, i) =>
+      ({ ...KB.lineDataset(n, genreEq[n], KB.palette[i % KB.palette.length], 1), fill: false })) },
+    options: { maintainAspectRatio: false, plugins: { legend: { display: gNames.length <= 10 } } }
+  });
+
+  // Genre bars
+  new Chart(document.getElementById('genres'), {
+    type: 'bar',
+    data: {
+      labels: genres.labels,
+      datasets: [
+        { label: 'Total PnL', data: genres.totals,
+          backgroundColor: genres.totals.map(v => v >= 0 ? 'rgba(52,211,153,.6)' : 'rgba(248,113,113,.6)'),
+          borderColor: genres.totals.map(v => v >= 0 ? '#34d399' : '#f87171'), borderWidth: 1 },
+        { label: 'Sharpe',    data: genres.sharpes, type: 'line',
+          borderColor: '#7dd3fc', backgroundColor: 'rgba(125,211,252,.15)',
+          pointRadius: 3, yAxisID: 'y1', tension: 0.2 },
+      ]
+    },
+    options: { maintainAspectRatio: false,
+               scales: { y1: { position: 'right', grid: { drawOnChartArea: false } } } }
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}

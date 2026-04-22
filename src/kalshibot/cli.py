@@ -161,6 +161,27 @@ def run():
 
 
 @app.command()
+def web(
+    host: str = typer.Option("127.0.0.1"),
+    port: int = typer.Option(8080),
+    debug: bool = typer.Option(False),
+    auto_backtest: bool = typer.Option(False, help="Kick off a backtest on startup if none exists"),
+    markets: int = typer.Option(24, help="Markets for the auto-backtest"),
+):
+    """Launch the kalshibot web dashboard (Flask)."""
+    from .web import create_app
+    from .web.state import AppState
+    from .web import jobs as webjobs
+    state = AppState()
+    web_app = create_app(state)
+    if auto_backtest and state.report is None:
+        console.print("[yellow]No report yet — starting a backtest in the background…[/yellow]")
+        webjobs.run_backtest(state, markets=markets)
+    console.print(f"[green]Serving dashboard at http://{host}:{port}[/green]")
+    web_app.run(host=host, port=port, debug=debug, use_reloader=False)
+
+
+@app.command()
 def list_strategies():
     """Print every available strategy."""
     for s in all_strategies():

@@ -21,17 +21,23 @@ pip install -e .
 ## Usage
 
 ```bash
-# 1) Backtest 100+ strategies on a synthetic universe and pick the best combo
+# 1) Web dashboard - run a backtest and explore results in the browser
+kalshibot web --port 8080 --auto-backtest
+
+# 2) CLI backtest (no UI)
 kalshibot backtest --markets 32
 
-# 2) Render a dashboard with PnL, per-genre, per-strategy, equity curves
-kalshibot dashboard --serve     # opens http://localhost:8765/dashboard.html
+# 3) Static HTML dashboard (single self-contained file)
+kalshibot dashboard --serve
 
-# 3) Live trade loop (reads .env; defaults to dry-run = no orders sent)
-cp .env.example .env             # edit credentials
+# 4) Live trade loop (reads .env; defaults to dry-run = no orders sent)
+cp .env.example .env              # edit credentials
 kalshibot run
 ```
 
+The web UI (`kalshibot web`) serves a Flask dashboard at
+`http://127.0.0.1:8080` with pages for Overview, Strategies, Genres, Markets,
+Ensemble, and Run-backtest (submits a background job and polls progress).
 `kalshibot list-strategies` and `kalshibot list-genres` are handy
 introspection commands.
 
@@ -40,13 +46,31 @@ introspection commands.
 1. Every strategy outputs a probability-of-YES series for each market.
 2. The backtester turns those into per-bar PnL using `position = sign(p - mid)`
    sized by `|p - mid|`, with a configurable threshold and fee.
-3. `combiner.best_combination` filters to the top-K by Sharpe, then runs a
-   projected-gradient SLSQP solver to maximize Sharpe on the simplex with an
-   L1 penalty for sparsity. If outcomes are available it blends with a
-   log-loss-optimal weight vector.
-4. Live: `bot.Trader` re-uses the saved weights, computes the blended
-   probability per snapshot, and sizes orders via half-Kelly capped by your
-   `MAX_POSITION_USD`.
+3. `combiner.best_combination` filters to the top-K by Sharpe, then blends
+   a Sharpe-maximizing solution with a risk-parity (equal risk contribution)
+   solution — the hybrid is noticeably less overfit than pure Sharpe maxing.
+   If outcomes are available it further blends with a log-loss-optimal
+   weight vector, then a correlation-cap step folds near-duplicate
+   strategies into their best representative.
+4. `walkforward.walk_forward` provides true out-of-sample Sharpe by refitting
+   the ensemble on rolling train windows and evaluating on the next block.
+5. Live: `bot.Trader` re-uses the saved weights, computes the blended
+   probability per snapshot, and sizes orders via half-Kelly scaled by
+   ensemble dispersion (strategies disagreeing → smaller bets) and capped by
+   both `MAX_POSITION_USD` and a per-genre exposure budget.
+
+## Profit-oriented extras
+
+- **Regime detection** (`regime.py`): rolling autocorrelation + Lo-MacKinlay
+  variance ratio label each bar as trending / mixed / mean-reverting.
+  Regime-gated strategies (`regime_trend_*`, `regime_mr_*`, `rsi_regime_*`)
+  only fire in the appropriate regime and survive walk-forward much better.
+- **Probability calibration** (`calibration.py`): isotonic regression maps
+  raw ensemble probabilities to empirical frequencies so Kelly sizing acts
+  on well-calibrated edges.
+- **Dispersion gate**: the live trader refuses to trade when the weighted
+  standard deviation of strategy probabilities exceeds a cap.
+- **Per-genre exposure cap**: one hot genre can't blow the book.
 
 ## Genre / niche analysis
 

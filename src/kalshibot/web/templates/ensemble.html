@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Ensemble · Kalshibot{% endblock %}
+{% block main %}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Ensemble</h1>
+    <p class="page-sub">The weighted combination the optimizer picked.</p>
+  </div>
+</div>
+
+{% if not has_report %}
+  <div class="empty"><h3>No backtest yet</h3>
+    <a class="btn" href="{{ url_for('backtest_page') }}">Start a backtest</a></div>
+{% else %}
+<div class="grid-2">
+  <div class="card">
+    <div class="card-head"><div><div class="card-title">Strategy weights</div>
+      <div class="card-sub">Non-zero weights, sorted</div></div></div>
+    <div class="chart-wrap big"><canvas id="w"></canvas></div>
+  </div>
+  <div class="card">
+    <div class="card-head"><div><div class="card-title">Ensemble vs. best single strategy</div>
+      <div class="card-sub">Diversification benefit</div></div></div>
+    <div class="chart-wrap big"><canvas id="cmp"></canvas></div>
+  </div>
+</div>
+
+<div class="spacer"></div>
+<div class="tablewrap">
+  <table>
+    <thead><tr><th>Strategy</th><th class="num">Weight</th></tr></thead>
+    <tbody>
+    {% set w = report.combo.weights %}
+    {% for name, v in w.sort_values(ascending=False).items() %}
+      {% if v > 0 %}
+        <tr><td class="mono">{{ name }}</td>
+            <td class="num">{{ '%.4f'|format(v) }}</td></tr>
+      {% endif %}
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if has_report %}
+<script>
+(async function () {
+  const [w, eq] = await Promise.all([
+    KB.fetchJSON('/api/weights'), KB.fetchJSON('/api/equity')
+  ]);
+  new Chart(document.getElementById('w'), {
+    type: 'bar',
+    data: { labels: w.labels, datasets: [{
+      label: 'Weight', data: w.values,
+      backgroundColor: 'rgba(125,211,252,.5)', borderColor: '#7dd3fc', borderWidth: 1
+    }] },
+    options: { maintainAspectRatio: false, indexAxis: 'y',
+               plugins: { legend: { display: false } } }
+  });
+  const names = Object.keys(eq);
+  const labels = names.length ? eq[names[0]].x : [];
+  new Chart(document.getElementById('cmp'), {
+    type: 'line',
+    data: { labels, datasets: names.map((n,i) =>
+      KB.lineDataset(n, eq[n], KB.palette[i % KB.palette.length], i)) },
+    options: { maintainAspectRatio: false }
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}

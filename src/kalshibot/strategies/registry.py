@@ -13,6 +13,7 @@ import pandas as pd
 
 from .. import features as F
 from ..data import MarketHistory
+from ..regime import regime_label
 from .base import Signal
 
 
@@ -235,6 +236,84 @@ def keltner_channel(n: int, k: float) -> PredictFn:
     return fn
 
 
+def regime_gated_trend(fast: int, slow: int, regime_n: int) -> PredictFn:
+    """Trend-follow only when the recent bar looks trending; otherwise fade."""
+    def fn(h: MarketHistory) -> pd.Series:
+        m = _mid(h)
+        diff = F.ema(m, fast) - F.ema(m, slow)
+        reg = regime_label(m, n=regime_n).reindex(m.index).fillna(0)
+        # +1 trend: follow.  -1 MR: fade.  0 mixed: no opinion.
+        score = diff * reg
+        return F.sigmoid(score * 14)
+    return fn
+
+
+def regime_gated_meanrev(n: int, regime_n: int) -> PredictFn:
+    def fn(h: MarketHistory) -> pd.Series:
+        m = _mid(h)
+        z = F.zscore(m, n)
+        reg = regime_label(m, n=regime_n).reindex(m.index).fillna(0)
+        # Trade only in MR regime; fade the z-score.
+        gate = (reg == -1).astype(float)
+        return F.sigmoid(-z * 2.0 * gate)
+    return fn
+
+
+def liquidity_weighted_edge(scale: float = 6.0) -> PredictFn:
+    """Only take the trade-vs-quote signal when open interest is meaningful."""
+    def fn(h: MarketHistory) -> pd.Series:
+        oi = h.df["open_interest"].fillna(0)
+        norm = (oi / (oi.rolling(60, min_periods=2).mean().replace(0, np.nan))).fillna(1).clip(0, 2)
+        edge = h.df["last"] - h.mid
+        return F.sigmoid(edge * scale * norm)
+    return fn
+
+
+def late_game_anchor(minutes_cutoff: float) -> PredictFn:
+    """In the last N minutes before close, the current market is nearly the
+    true probability - lean toward it and fade divergences aggressively.
+    """
+    def fn(h: MarketHistory) -> pd.Series:
+        m = h.mid
+        ttc = h.df["minutes_to_close"].clip(lower=0)
+        # Only active when ttc < minutes_cutoff; otherwise neutral 0.5.
+        active = (ttc < minutes_cutoff).astype(float)
+        drift = (h.df["last"] - m) * 10 * active
+        return F.sigmoid(drift)
+    return fn
+
+
+def trend_persistence(n: int) -> PredictFn:
+    """Score rises as consecutive same-sign returns accumulate."""
+    def fn(h: MarketHistory) -> pd.Series:
+        r = _mid(h).diff().fillna(0)
+        sign = np.sign(r)
+        persist = sign.rolling(n, min_periods=2).sum()
+        return F.sigmoid(persist * 0.4)
+    return fn
+
+
+def dispersion_fade(n: int) -> PredictFn:
+    """When intrabar dispersion spikes, uncertainty is high → regress to 0.5."""
+    def fn(h: MarketHistory) -> pd.Series:
+        disp = (h.df["yes_ask"] - h.df["yes_bid"]).rolling(n, min_periods=2).std().fillna(0)
+        m = h.mid
+        # High dispersion → pull toward 0.5; low dispersion → trust mid.
+        gain = 1.0 / (1.0 + disp * 20)
+        return 0.5 + (m - 0.5) * gain
+    return fn
+
+
+def rsi_regime(rsi_n: int, regime_n: int) -> PredictFn:
+    """RSI-ride in trending regime, RSI-fade in mean-reverting regime."""
+    def fn(h: MarketHistory) -> pd.Series:
+        r = F.rsi(_mid(h), rsi_n)
+        reg = regime_label(_mid(h), n=regime_n).reindex(r.index).fillna(0)
+        score = ((r - 50) / 50.0) * reg  # reg=+1 ride, reg=-1 fade, reg=0 flat
+        return F.sigmoid(score * 2.0)
+    return fn
+
+
 # ---------------------------------------------------------------------------
 # Build the catalog. Aim for ~100 distinct strategies.
 # ---------------------------------------------------------------------------
@@ -320,6 +399,31 @@ def _build() -> list[Strat]:
     # Keltner (4)
     for n, k in [(20, 1.5), (20, 2.0), (50, 1.5), (50, 2.5)]:
         out.append(Strat(f"keltner_{n}_{k}", keltner_channel(n, k)))
+
+    # Regime-gated variants - these tend to survive walk-forward best
+    for fast, slow, rn in [(5, 20, 30), (10, 30, 50), (12, 26, 60), (20, 50, 100)]:
+        out.append(Strat(f"regime_trend_{fast}_{slow}_{rn}", regime_gated_trend(fast, slow, rn)))
+    for n, rn in [(10, 30), (20, 50), (30, 60), (50, 100)]:
+        out.append(Strat(f"regime_mr_{n}_{rn}", regime_gated_meanrev(n, rn)))
+
+    # Liquidity-weighted edge (1)
+    out.append(Strat("liq_edge", liquidity_weighted_edge()))
+
+    # Late-game anchors (4) - big alpha when resolution is imminent
+    for cutoff in [15, 60, 180, 360]:
+        out.append(Strat(f"late_anchor_{cutoff}", late_game_anchor(cutoff)))
+
+    # Trend persistence (3)
+    for n in [5, 10, 20]:
+        out.append(Strat(f"persist_{n}", trend_persistence(n)))
+
+    # Dispersion fade (3)
+    for n in [10, 30, 60]:
+        out.append(Strat(f"disp_fade_{n}", dispersion_fade(n)))
+
+    # RSI regime (4)
+    for rn, rg in [(7, 30), (14, 30), (14, 60), (21, 60)]:
+        out.append(Strat(f"rsi_regime_{rn}_{rg}", rsi_regime(rn, rg)))
 
     return out
 

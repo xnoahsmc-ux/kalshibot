@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Markets · Kalshibot{% endblock %}
+{% block main %}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Markets</h1>
+    <p class="page-sub">Ensemble-weighted PnL on every market in the backtest.</p>
+  </div>
+  <div class="row">
+    <select id="filter_genre">
+      <option value="">All genres</option>
+      {% for g in genres %}<option value="{{ g }}">{{ g }}</option>{% endfor %}
+    </select>
+    <input id="q" type="text" placeholder="Search ticker…" style="width:240px;">
+  </div>
+</div>
+
+{% if not has_report %}
+  <div class="empty"><h3>No backtest yet</h3><p>Run a backtest to populate market stats.</p>
+    <a class="btn" href="{{ url_for('backtest_page') }}">Start a backtest</a></div>
+{% else %}
+<div class="tablewrap">
+  <table id="tbl">
+    <thead><tr>
+      <th>Market</th><th>Genre</th>
+      <th class="num">Total PnL</th><th class="num">Sharpe</th>
+      <th class="num">Hit rate</th><th class="num">Max DD</th>
+    </tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr data-genre="{{ r.genre }}">
+        <td class="mono">{{ r.market }}</td>
+        <td><span class="pill">{{ r.genre }}</span></td>
+        <td class="num {% if r.total >= 0 %}pos{% else %}neg{% endif %}">{{ '%+.4f'|format(r.total) }}</td>
+        <td class="num {% if r.sharpe >= 0 %}pos{% else %}neg{% endif %}">{{ '%+.2f'|format(r.sharpe) }}</td>
+        <td class="num">{{ '%.1f%%'|format(r.hit_rate * 100) }}</td>
+        <td class="num neg">{{ '%+.4f'|format(r.max_dd) }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  const q = document.getElementById('q'), fg = document.getElementById('filter_genre');
+  if (!q) return;
+  const apply = () => {
+    const t = q.value.toLowerCase(), g = fg.value;
+    document.querySelectorAll('#tbl tbody tr').forEach(tr => {
+      const okText = tr.cells[0].textContent.toLowerCase().includes(t);
+      const okG = !g || tr.dataset.genre === g;
+      tr.style.display = (okText && okG) ? '' : 'none';
+    });
+  };
+  q.addEventListener('input', apply);
+  fg.addEventListener('change', apply);
+})();
+</script>
+{% endblock %}

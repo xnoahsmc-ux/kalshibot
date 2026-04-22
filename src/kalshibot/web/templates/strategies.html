@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Strategies · Kalshibot{% endblock %}
+{% block main %}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Strategies</h1>
+    <p class="page-sub">All strategies with Sharpe, total PnL, hit-rate, and max drawdown.</p>
+  </div>
+  <div class="row">
+    <input id="q" type="text" placeholder="Search strategies…" style="width: 260px;">
+  </div>
+</div>
+
+{% if not has_report %}
+  <div class="empty">
+    <h3>No backtest yet</h3><p>Run a backtest to populate this table.</p>
+    <a class="btn" href="{{ url_for('backtest_page') }}">Start a backtest</a>
+  </div>
+{% else %}
+<div class="tablewrap">
+  <table id="tbl">
+    <thead><tr>
+      <th data-k="strategy">Strategy</th>
+      <th class="num" data-k="sharpe">Sharpe</th>
+      <th class="num" data-k="total">Total PnL</th>
+      <th class="num" data-k="mean">Mean/bar</th>
+      <th class="num" data-k="hit_rate">Hit rate</th>
+      <th class="num" data-k="max_dd">Max DD</th>
+      <th class="num" data-k="n_bars">Bars</th>
+    </tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        <td class="mono">{{ r.strategy }}</td>
+        <td class="num {% if r.sharpe >= 0 %}pos{% else %}neg{% endif %}">{{ '%+.2f'|format(r.sharpe) }}</td>
+        <td class="num {% if r.total >= 0 %}pos{% else %}neg{% endif %}">{{ '%+.4f'|format(r.total) }}</td>
+        <td class="num">{{ '%+.5f'|format(r.mean) }}</td>
+        <td class="num">{{ '%.1f%%'|format(r.hit_rate * 100) }}</td>
+        <td class="num neg">{{ '%+.4f'|format(r.max_dd) }}</td>
+        <td class="num">{{ r.n_bars }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  const q = document.getElementById('q');
+  if (!q) return;
+  q.addEventListener('input', () => {
+    const t = q.value.toLowerCase();
+    document.querySelectorAll('#tbl tbody tr').forEach(tr => {
+      tr.style.display = tr.cells[0].textContent.toLowerCase().includes(t) ? '' : 'none';
+    });
+  });
+  // Click-to-sort columns
+  document.querySelectorAll('#tbl thead th').forEach((th, idx) => {
+    let asc = true;
+    th.style.cursor = 'pointer';
+    th.addEventListener('click', () => {
+      const rows = [...document.querySelectorAll('#tbl tbody tr')];
+      rows.sort((a, b) => {
+        const av = a.cells[idx].textContent.replace(/[%+,]/g, '').trim();
+        const bv = b.cells[idx].textContent.replace(/[%+,]/g, '').trim();
+        const an = parseFloat(av), bn = parseFloat(bv);
+        if (!isNaN(an) && !isNaN(bn)) return asc ? an - bn : bn - an;
+        return asc ? av.localeCompare(bv) : bv.localeCompare(av);
+      });
+      const body = document.querySelector('#tbl tbody');
+      rows.forEach(r => body.appendChild(r));
+      asc = !asc;
+    });
+  });
+})();
+</script>
+{% endblock %}
