@@ -1,0 +1,181 @@
+"""Command-line entry point.
+
+  kalshibot backtest                # backtest 100 strategies on synthetic data
+  kalshibot backtest --markets 30   # more synthetic markets
+  kalshibot dashboard               # backtest then write & open dashboard.html
+  kalshibot run                     # live loop (uses .env)
+"""
+from __future__ import annotations
+
+import json
+import pickle
+from pathlib import Path
+
+import typer
+from rich.console import Console
+from rich.table import Table
+
+from .analytics import build_report
+from .backtester import evaluate_all, stack_pnls, stack_probs
+from .bot import run_forever
+from .combiner import Combination, best_combination
+from .config import load_config
+from .dashboard import render, serve as serve_dashboard
+from .data import MarketHistory, synthesize_history
+from .genres import classify
+from .strategies.registry import all_strategies
+
+app = typer.Typer(add_completion=False, help="Multi-strategy Kalshi trading bot")
+console = Console()
+
+
+def _synth_universe(n_markets: int, seed: int = 0) -> list[MarketHistory]:
+    """Synthesize a universe of markets that span our genres for backtesting."""
+    archetypes = [
+        ("KXNFL-DEMO", 0.0, 0.025, 0.55),
+        ("KXNBA-DEMO", 0.001, 0.020, 0.48),
+        ("KXWEATHERHIGH-DEMO", -0.0005, 0.012, 0.40),
+        ("KXWEATHERSNOW-DEMO", 0.0, 0.018, 0.35),
+        ("KXPOLPRES-DEMO", 0.0008, 0.030, 0.52),
+        ("KXSENATE-DEMO", -0.0003, 0.022, 0.45),
+        ("KXCPI-DEMO", 0.0, 0.015, 0.50),
+        ("KXFEDRATE-DEMO", 0.0002, 0.018, 0.42),
+        ("KXBTC-DEMO", 0.001, 0.035, 0.60),
+        ("KXETH-DEMO", -0.001, 0.030, 0.55),
+        ("KXSPX-DEMO", 0.0005, 0.014, 0.55),
+        ("KXOSCAR-DEMO", 0.0, 0.020, 0.30),
+        ("KXAI-DEMO", 0.0008, 0.022, 0.65),
+        ("KXSPACE-DEMO", 0.0, 0.025, 0.40),
+        ("KXOIL-DEMO", -0.0006, 0.020, 0.50),
+        ("KXMUSK-DEMO", 0.0, 0.030, 0.55),
+    ]
+    out = []
+    for i in range(n_markets):
+        a = archetypes[i % len(archetypes)]
+        ticker, drift, vol, start = a
+        h = synthesize_history(
+            ticker=f"{ticker}-{i:03d}",
+            n=600,
+            seed=seed + i,
+            drift=drift,
+            vol=vol,
+            start_p=start,
+        )
+        out.append(h)
+    return out
+
+
+@app.command()
+def backtest(
+    markets: int = typer.Option(16, help="Number of synthetic markets to backtest"),
+    threshold: float = typer.Option(0.02, help="Minimum edge to take a position"),
+    fee_bps: float = typer.Option(5.0, help="Per-turn cost in basis points"),
+    top_k: int = typer.Option(30, help="Pre-filter top-k strategies before optimization"),
+    save: Path = typer.Option(Path("backtest_report.pkl"), help="Where to pickle the report"),
+):
+    """Run a full backtest across all strategies and pick the optimal combo."""
+    strats = all_strategies()
+    console.print(f"[cyan]Loaded {len(strats)} strategies[/cyan]")
+
+    universe = _synth_universe(markets)
+    tickers = [h.ticker for h in universe]
+    console.print(f"[cyan]Backtesting on {len(universe)} markets[/cyan]")
+
+    evals = evaluate_all(strats, universe, threshold=threshold, fee_bps=fee_bps)
+    pnl = stack_pnls(evals)
+    probs = stack_probs(evals)
+
+    # Outcomes: terminal mid > 0.5 → 1
+    outcomes_per_market = [1.0 if h.mid.iloc[-1] >= 0.5 else 0.0 for h in universe]
+    bar_outcomes = []
+    for h, y in zip(universe, outcomes_per_market):
+        bar_outcomes.extend([y] * len(h.df))
+    import pandas as pd
+    outcomes = pd.Series(bar_outcomes[:len(probs)])
+
+    combo = best_combination(pnl, probs, outcomes, top_k=top_k)
+    report = build_report(evals, tickers, combo)
+
+    # Print top-level tables
+    t = Table(title="Top 15 strategies by Sharpe")
+    t.add_column("strategy"); t.add_column("sharpe"); t.add_column("total"); t.add_column("hit"); t.add_column("max_dd")
+    for name, row in report.per_strategy.head(15).iterrows():
+        t.add_row(name, f"{row.sharpe:+.2f}", f"{row.total:+.4f}",
+                  f"{row.hit_rate:.2%}", f"{row.max_dd:+.4f}")
+    console.print(t)
+
+    g = Table(title="Genre performance (ensemble)")
+    g.add_column("genre"); g.add_column("markets"); g.add_column("total"); g.add_column("sharpe")
+    g.add_column("max_dd"); g.add_column("best_strategy")
+    for name, row in report.per_genre.iterrows():
+        g.add_row(name, str(int(row.n_markets)), f"{row.total:+.4f}",
+                  f"{row.sharpe:+.2f}", f"{row.max_dd:+.4f}",
+                  report.best_strategy_per_genre.get(name, ""))
+    console.print(g)
+
+    w = Table(title="Top 10 weights in optimal ensemble")
+    w.add_column("strategy"); w.add_column("weight")
+    for name, val in combo.top(10).items():
+        w.add_row(name, f"{val:.3f}")
+    console.print(w)
+
+    console.print(
+        f"[green]Ensemble Sharpe: {combo.sharpe:+.2f}  "
+        f"Total PnL: {report.equity_curve.iloc[-1]:+.4f}[/green]"
+    )
+
+    save.write_bytes(pickle.dumps(report))
+    console.print(f"[dim]Report saved to {save}[/dim]")
+
+
+@app.command()
+def dashboard(
+    report_path: Path = typer.Option(Path("backtest_report.pkl"),
+                                     help="Backtest report from `backtest`"),
+    out: Path = typer.Option(Path("dashboard.html")),
+    serve: bool = typer.Option(False, "--serve", help="Serve dashboard.html on localhost"),
+    port: int = typer.Option(8765),
+    markets: int = typer.Option(16, help="If no report exists, run a fresh backtest"),
+):
+    """Generate (and optionally serve) the HTML dashboard."""
+    if not report_path.exists():
+        console.print("[yellow]No backtest report found, running one now…[/yellow]")
+        backtest(markets=markets, threshold=0.02, fee_bps=5.0, top_k=30, save=report_path)
+    report = pickle.loads(report_path.read_bytes())
+    path = render(report, out)
+    console.print(f"[green]Wrote {path}[/green]")
+    if serve:
+        serve_dashboard(path, port=port)
+
+
+@app.command()
+def run():
+    """Live trade loop (uses optimal ensemble from disk; runs backtest if absent)."""
+    cfg = load_config()
+    report_path = Path("backtest_report.pkl")
+    if not report_path.exists():
+        console.print("[yellow]No saved backtest, computing one first…[/yellow]")
+        backtest(markets=16, threshold=0.02, fee_bps=5.0, top_k=30, save=report_path)
+    report = pickle.loads(report_path.read_bytes())
+    run_forever(cfg, report.combo)
+
+
+@app.command()
+def list_strategies():
+    """Print every available strategy."""
+    for s in all_strategies():
+        console.print(f"  {s.name}")
+
+
+@app.command()
+def list_genres(tickers: list[str] = typer.Argument(None)):
+    """Classify a list of tickers into genres."""
+    if not tickers:
+        tickers = [h.ticker for h in _synth_universe(16)]
+    for t in tickers:
+        info = classify(t)
+        console.print(f"{t:32}  -> {info.genre}  ({info.matched_token})")
+
+
+if __name__ == "__main__":
+    app()
