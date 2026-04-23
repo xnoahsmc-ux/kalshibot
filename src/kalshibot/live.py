@@ -90,6 +90,9 @@ class LiveFeed:
         self._nws = NWSClient()
         self._espn = ESPNClient()
         self._paper_manager = None  # set by AppState
+        self._executor = None        # set by AppState if creds configured
+        self._journal = None         # set by AppState
+        self._learner = None         # set by AppState
 
     # ------------------------------------------------------------------ API
     def status(self) -> LiveStatus:
@@ -189,6 +192,30 @@ class LiveFeed:
                 self._paper_manager.process(list(self._signals.values()))
             except Exception as e:
                 self._status.last_error = f"paper manager: {type(e).__name__}: {e}"
+        # Auto-trade: let the executor fire real orders for high-conf signals.
+        if self._executor is not None and getattr(
+                self._executor.limits, "auto_trade_enabled", False):
+            for sig in self._signals.values():
+                try:
+                    self._executor.execute_signal(sig)
+                except Exception as e:
+                    self._status.last_error = f"auto-trade: {type(e).__name__}: {e}"
+        # Settlement detection: any journal entry whose market is at 0/100¢ is settled.
+        if self._journal is not None:
+            for entry in list(self._journal.open_entries()):
+                sig = self._signals.get(entry.ticker)
+                if sig is None:
+                    continue
+                if sig.yes_bid >= 0.99 and sig.yes_ask >= 0.99:
+                    self._journal.update_settlement(entry.id, settlement_price_cents=100)
+                    if self._learner is not None and entry.contributing_strategies:
+                        probs = {name: 1.0 for name in entry.contributing_strategies}
+                        self._learner.update_from_trade(strategy_probs=probs, outcome=1)
+                elif sig.yes_bid <= 0.01 and sig.yes_ask <= 0.01:
+                    self._journal.update_settlement(entry.id, settlement_price_cents=0)
+                    if self._learner is not None and entry.contributing_strategies:
+                        probs = {name: 0.0 for name in entry.contributing_strategies}
+                        self._learner.update_from_trade(strategy_probs=probs, outcome=0)
 
     def _signal_for(self, ticker: str, h: MarketHistory, snap) -> LiveSignal:
         title = self._titles.get(ticker, ticker)

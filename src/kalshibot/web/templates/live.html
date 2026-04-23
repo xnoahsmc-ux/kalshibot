@@ -13,6 +13,41 @@
   </div>
 </div>
 
+<div id="riskbar" class="card" style="margin-bottom:16px; padding:14px 18px;">
+  <div class="row" style="gap:18px; flex-wrap:wrap;">
+    <div class="row" style="gap:10px;">
+      <button id="killBtn" class="btn-stop" style="padding:10px 16px;">🛑 KILL SWITCH</button>
+      <div class="hint">Engage to block all new orders instantly.</div>
+    </div>
+    <div class="sep" style="width:1px; background:var(--border); height:30px;"></div>
+    <label class="row" style="gap:8px; margin:0;">
+      <input id="autoTrade" type="checkbox">
+      <span style="font-weight:700; color:var(--text); text-transform:uppercase; letter-spacing:0.1em; font-size:11px;">Auto-trade</span>
+    </label>
+    <div class="row" style="gap:6px;">
+      <label style="margin:0;">MIN CONF</label>
+      <select id="autoConf" style="padding:6px 10px;">
+        <option value="high">High</option><option value="med">Medium</option><option value="low">Low</option>
+      </select>
+    </div>
+    <div class="row" style="gap:6px;">
+      <label style="margin:0;">MIN EDGE</label>
+      <input id="autoEdge" type="number" step="0.01" min="0.01" max="0.5" style="width:80px;">
+    </div>
+    <div class="row" style="gap:6px;">
+      <label style="margin:0;">DAILY LOSS CAP</label>
+      <input id="dailyCap" type="number" step="5" min="5" style="width:90px;">
+      <span class="dim">$</span>
+    </div>
+    <div class="row" style="gap:6px;">
+      <label style="margin:0;">MAX PER TRADE</label>
+      <input id="maxTrade" type="number" step="5" min="1" style="width:90px;">
+      <span class="dim">$</span>
+    </div>
+    <div class="right" id="todayPnl" style="font-weight:700; font-size:14px;">Today: —</div>
+  </div>
+</div>
+
 <div id="banner" style="display:none; margin-bottom:16px;"></div>
 
 <div class="grid-4" style="margin-bottom:24px;">
@@ -35,9 +70,10 @@
       <th class="num">Stake</th>
       <th class="num">Expected profit</th>
       <th class="num">Close in</th>
+      <th>Place</th>
     </tr></thead>
     <tbody id="rows">
-      <tr><td colspan="9" class="dim" style="text-align:center; padding:60px;">
+      <tr><td colspan="10" class="dim" style="text-align:center; padding:60px;">
         Press <b>START LIVE FEED</b> above to begin polling Kalshi.
       </td></tr>
     </tbody>
@@ -73,6 +109,33 @@
 {% endblock %}
 
 {% block scripts %}
+
+<!-- Bet confirmation modal -->
+<div id="betModal" style="display:none; position:fixed; inset:0; background:rgba(3,6,15,.82); z-index:100; align-items:center; justify-content:center;">
+  <div class="card" style="width:460px; max-width:94vw;">
+    <div class="card-head"><div><div class="card-title">Place bet</div>
+      <div class="card-sub">Review before submitting to Kalshi</div></div></div>
+    <div id="betBody" class="dim" style="font-size:13px; line-height:1.7;"></div>
+    <div class="field" style="margin-top:14px;">
+      <label>Stake (USD)</label>
+      <div class="row" style="gap:6px; margin-bottom:8px;">
+        <button type="button" class="btn-ghost stake-quick" data-v="1" style="padding:6px 10px;">$1</button>
+        <button type="button" class="btn-ghost stake-quick" data-v="5" style="padding:6px 10px;">$5</button>
+        <button type="button" class="btn-ghost stake-quick" data-v="10" style="padding:6px 10px;">$10</button>
+        <button type="button" class="btn-ghost stake-quick" data-v="25" style="padding:6px 10px;">$25</button>
+        <button type="button" class="btn-ghost stake-quick" data-v="50" style="padding:6px 10px;">$50</button>
+        <button type="button" class="btn-ghost stake-quick" data-v="100" style="padding:6px 10px;">$100</button>
+      </div>
+      <input id="stakeInput" type="number" min="1" step="0.5" value="5">
+    </div>
+    <div id="betEstimate" class="dim" style="font-size:12px;"></div>
+    <div class="row" style="justify-content:flex-end; margin-top:16px; gap:10px;">
+      <button id="betCancel" class="btn-ghost">Cancel</button>
+      <button id="betConfirm" class="btn-start">Confirm &amp; send order</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const toggle = document.getElementById('toggleBtn');
 const authBtn = document.getElementById('authBtn');
@@ -178,8 +241,33 @@ async function refresh() {
         <td class="num">${actionable ? '$'+s.suggested_notional.toFixed(2) : '—'}</td>
         <td class="num">${epText}</td>
         <td class="num dim">${ttc}</td>
+        <td>${actionable ? `<button class="place-btn" data-ticker="${s.ticker}" data-side="${s.suggested_side}" data-price="${Math.round(entryPrice*100)}" data-notional="${s.suggested_notional.toFixed(2)}" data-conf="${s.confidence}" data-title="${(s.title||'').replace(/"/g,'&quot;')}" style="padding:6px 10px; font-size:12px;">Place</button>` : `<span class="dim">—</span>`}</td>
       </tr>`;
     }).join('');
+    document.querySelectorAll('.place-btn').forEach(btn => {
+      btn.addEventListener('click', () => openBetModal({
+        ticker: btn.dataset.ticker, side: btn.dataset.side,
+        price: parseInt(btn.dataset.price, 10),
+        notional: parseFloat(btn.dataset.notional),
+        conf: btn.dataset.conf, title: btn.dataset.title,
+      }));
+    });
+
+    // Browser notifications for new high-conf signals
+    if ("Notification" in window && Notification.permission === "granted") {
+      for (const s of sigs) {
+        if (s.confidence === "high" && s.suggested_side !== "flat" &&
+            !window.__notified?.has?.(s.ticker)) {
+          window.__notified = window.__notified || new Set();
+          window.__notified.add(s.ticker);
+          new Notification(`🎯 High-conf ${s.suggested_side} on ${s.ticker}`, {
+            body: `${s.rationale} — suggested $${s.suggested_notional.toFixed(2)}`,
+            silent: false,
+          });
+          if (window.__notified.size > 40) window.__notified.clear();
+        }
+      }
+    }
   } catch(e){}
 
   setTimeout(refresh, 3000);
@@ -224,5 +312,123 @@ authBtn.addEventListener('click', async () => {
 });
 
 refresh();
+
+// ============ Risk bar ============
+async function loadRisk() {
+  try {
+    const r = await KB.fetchJSON('/api/risk');
+    document.getElementById('autoTrade').checked = !!r.auto_trade_enabled;
+    document.getElementById('autoConf').value = r.auto_trade_min_conf;
+    document.getElementById('autoEdge').value = r.auto_trade_min_edge;
+    document.getElementById('dailyCap').value = r.daily_loss_limit_usd;
+    document.getElementById('maxTrade').value = r.max_notional_per_trade_usd;
+    const kb = document.getElementById('killBtn');
+    if (r.kill_switch) {
+      kb.textContent = '🟢 RESUME'; kb.className = 'btn-start';
+    } else {
+      kb.textContent = '🛑 KILL SWITCH'; kb.className = 'btn-stop';
+    }
+    const pnl = r.today_realized_pnl_usd || 0;
+    const pnlCls = pnl >= 0 ? 'pos' : 'neg';
+    document.getElementById('todayPnl').innerHTML =
+      `Today: <span class="${pnlCls}">${pnl>=0?'+':''}$${pnl.toFixed(2)}</span> · ${r.today_orders_sent||0} orders`;
+  } catch(e){}
+  setTimeout(loadRisk, 6000);
+}
+loadRisk();
+
+async function postRisk(patch) {
+  try {
+    await fetch('/api/risk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+  } catch(e){}
+}
+document.getElementById('killBtn').addEventListener('click', async () => {
+  const r = await KB.fetchJSON('/api/risk');
+  await postRisk({ kill_switch: !r.kill_switch });
+  loadRisk();
+});
+document.getElementById('autoTrade').addEventListener('change', (e) => {
+  if (e.target.checked && !confirm('Auto-trade will submit REAL orders to Kalshi when signals meet your thresholds. Continue?')) {
+    e.target.checked = false; return;
+  }
+  postRisk({ auto_trade_enabled: e.target.checked });
+});
+document.getElementById('autoConf').addEventListener('change', e => postRisk({ auto_trade_min_conf: e.target.value }));
+document.getElementById('autoEdge').addEventListener('change', e => postRisk({ auto_trade_min_edge: parseFloat(e.target.value) }));
+document.getElementById('dailyCap').addEventListener('change', e => postRisk({ daily_loss_limit_usd: parseFloat(e.target.value) }));
+document.getElementById('maxTrade').addEventListener('change', e => postRisk({ max_notional_per_trade_usd: parseFloat(e.target.value) }));
+
+// ============ Bet modal ============
+let _betTarget = null;
+function openBetModal(target) {
+  _betTarget = target;
+  const stakeInput = document.getElementById('stakeInput');
+  stakeInput.value = Math.max(1, Math.min(100, Math.round(target.notional)));
+  document.getElementById('betBody').innerHTML = `
+    <div><b style="color:var(--text); font-size:14px;">${target.title || target.ticker}</b></div>
+    <div class="mono" style="font-size:11px;">${target.ticker}</div>
+    <div style="margin-top:10px;">
+      Side: <span class="pill ${target.side==='YES'?'side-yes':'side-no'}">${target.side}</span>
+      &nbsp;·&nbsp; Limit price: <b>${target.price}¢</b>
+      &nbsp;·&nbsp; Confidence: <b>${target.conf.toUpperCase()}</b>
+    </div>`;
+  updateEstimate();
+  document.getElementById('betModal').style.display = 'flex';
+}
+function updateEstimate() {
+  if (!_betTarget) return;
+  const stake = parseFloat(document.getElementById('stakeInput').value) || 0;
+  const p = _betTarget.price / 100.0;
+  const contracts = Math.floor(stake / Math.max(0.01, p));
+  const actual = contracts * p;
+  const maxWin = contracts * (1 - p);
+  document.getElementById('betEstimate').innerHTML =
+    `Buys <b>${contracts}</b> contracts for <b>$${actual.toFixed(2)}</b>. ` +
+    `Max profit if it wins: <span class="pos">+$${maxWin.toFixed(2)}</span>. ` +
+    `Max loss: <span class="neg">-$${actual.toFixed(2)}</span>.`;
+}
+document.getElementById('stakeInput').addEventListener('input', updateEstimate);
+document.querySelectorAll('.stake-quick').forEach(b => b.addEventListener('click', () => {
+  document.getElementById('stakeInput').value = b.dataset.v;
+  updateEstimate();
+}));
+document.getElementById('betCancel').addEventListener('click', () => {
+  document.getElementById('betModal').style.display = 'none';
+});
+document.getElementById('betConfirm').addEventListener('click', async () => {
+  if (!_betTarget) return;
+  const stake = parseFloat(document.getElementById('stakeInput').value) || 0;
+  document.getElementById('betConfirm').disabled = true;
+  try {
+    const r = await fetch('/api/execute', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ticker: _betTarget.ticker, side: _betTarget.side,
+        stake: stake, price_cents: _betTarget.price,
+      }),
+    });
+    const j = await r.json();
+    if (j.ok) {
+      showBanner(`<b style="color:var(--ok);">Order submitted.</b> ${j.message}`, 'ok');
+      setTimeout(hideBanner, 5000);
+    } else {
+      showBanner(`<b style="color:var(--bad);">Rejected:</b> ${j.error || j.message}`, 'bad');
+    }
+  } catch (e) {
+    showBanner(`<b style="color:var(--bad);">Failed:</b> ${e.message}`, 'bad');
+  } finally {
+    document.getElementById('betConfirm').disabled = false;
+    document.getElementById('betModal').style.display = 'none';
+  }
+});
+
+// Ask for notification permission once
+if ("Notification" in window && Notification.permission === "default") {
+  setTimeout(() => Notification.requestPermission().catch(()=>{}), 2000);
+}
 </script>
 {% endblock %}

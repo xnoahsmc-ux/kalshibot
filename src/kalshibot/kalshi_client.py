@@ -241,6 +241,15 @@ class KalshiClient:
             params["status"] = status
         return self._request("GET", "/portfolio/orders", params=params)
 
+    def get_fills(self, limit: int = 200, cursor: str | None = None) -> dict:
+        params: dict[str, Any] = {"limit": limit}
+        if cursor:
+            params["cursor"] = cursor
+        return self._request("GET", "/portfolio/fills", params=params)
+
+    def get_settlements(self, limit: int = 200) -> dict:
+        return self._request("GET", "/portfolio/settlements", params={"limit": limit})
+
     def place_order(
         self,
         ticker: str,

@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% block title %}Journal · Kalshi Bot{% endblock %}
+{% block main %}
+
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Trade journal</h1>
+    <p class="page-sub">Every order the bot (or you) submitted via this app, plus what the learner has picked up from them.</p>
+  </div>
+</div>
+
+<div class="grid-4" style="margin-bottom:24px;">
+  <div class="kpi" id="kpiAll"><div class="label">Total trades</div><div class="value">0</div><div class="sub">—</div></div>
+  <div class="kpi" id="kpiHit"><div class="label">Hit rate</div><div class="value">—</div><div class="sub">settled only</div></div>
+  <div class="kpi" id="kpiPnl"><div class="label">Realized PnL</div><div class="value">$0.00</div><div class="sub">lifetime</div></div>
+  <div class="kpi" id="kpiRoi"><div class="label">ROI</div><div class="value">0.0%</div><div class="sub">on capital staked</div></div>
+</div>
+
+<div class="grid-2">
+  <div class="card" style="padding: 18px;">
+    <div class="card-head"><div><div class="card-title">Realized PnL over time</div>
+      <div class="card-sub">Each point = one settled trade</div></div></div>
+    <div class="chart-wrap big"><canvas id="pnlCurve"></canvas></div>
+  </div>
+  <div class="card">
+    <div class="card-head"><div><div class="card-title">Learner insights</div>
+      <div class="card-sub">Top strategies by realized hit rate</div></div></div>
+    <table>
+      <thead><tr><th>Strategy</th><th class="num">Score</th><th class="num">Trades</th></tr></thead>
+      <tbody id="learnerRows"></tbody>
+    </table>
+    <div id="learnerMeta" class="hint" style="margin-top:10px;"></div>
+  </div>
+</div>
+
+<div class="spacer"></div>
+<h2>All trades</h2>
+<div class="tablewrap">
+  <table>
+    <thead><tr>
+      <th>When</th>
+      <th>Market</th>
+      <th>Side</th>
+      <th class="num">Contracts</th>
+      <th class="num">Price</th>
+      <th class="num">Notional</th>
+      <th>Source</th>
+      <th>Confidence</th>
+      <th>Status</th>
+      <th class="num">Realized</th>
+    </tr></thead>
+    <tbody id="rows"><tr><td colspan="10" class="dim" style="text-align:center; padding:40px;">Loading…</td></tr></tbody>
+  </table>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+let chart = null;
+async function load() {
+  try {
+    const d = await KB.fetchJSON('/api/journal');
+    const s = d.stats || {};
+    document.getElementById('kpiAll').innerHTML =
+      `<div class="label">Total trades</div><div class="value">${s.total_trades||0}</div><div class="sub">${s.open_trades||0} open · ${s.settled_trades||0} settled</div>`;
+    const hr = s.hit_rate || 0;
+    document.getElementById('kpiHit').innerHTML =
+      `<div class="label">Hit rate</div><div class="value ${hr>=0.5?'good':'bad'}">${(hr*100).toFixed(0)}%</div><div class="sub">${s.wins||0}W · ${s.losses||0}L</div>`;
+    const pnl = s.realized_pnl_usd || 0;
+    document.getElementById('kpiPnl').innerHTML =
+      `<div class="label">Realized PnL</div><div class="value ${pnl>=0?'good':'bad'}">${pnl>=0?'+':''}$${pnl.toFixed(2)}</div><div class="sub">lifetime</div>`;
+    const roi = s.roi_pct || 0;
+    document.getElementById('kpiRoi').innerHTML =
+      `<div class="label">ROI</div><div class="value ${roi>=0?'good':'bad'}">${roi>=0?'+':''}${roi.toFixed(1)}%</div><div class="sub">on capital staked</div>`;
+
+    // Learner
+    const L = d.learner || {};
+    document.getElementById('learnerRows').innerHTML = (L.top||[]).map(t =>
+      `<tr><td class="mono">${t.name}</td><td class="num">${(t.score*100).toFixed(1)}%</td><td class="num">${t.trades}</td></tr>`
+    ).join('') || `<tr><td colspan="3" class="dim">No settled trades yet</td></tr>`;
+    document.getElementById('learnerMeta').textContent =
+      `${L.total_updates||0} learner updates · ${L.strategies_tracked||0} strategies tracked.`;
+
+    // PnL curve
+    const settled = (d.entries||[]).filter(e => e.realized_pnl_usd != null)
+                     .sort((a,b) => a.created_at - b.created_at);
+    let cum = 0;
+    const points = settled.map(e => {
+      cum += e.realized_pnl_usd;
+      return { x: new Date(e.created_at*1000), y: cum };
+    });
+    if (chart) chart.destroy();
+    chart = new Chart(document.getElementById('pnlCurve'), {
+      type: 'line',
+      data: { datasets: [{
+        label: 'Cumulative PnL',
+        data: points,
+        borderColor: cum >= 0 ? '#22c55e' : '#ef4444',
+        backgroundColor: (cum >= 0 ? '#22c55e' : '#ef4444') + '22',
+        pointRadius: 3, tension: 0.2, fill: true,
+      }]},
+      options: {
+        maintainAspectRatio: false,
+        scales: { x: { type: 'category', display: false } },
+      }
+    });
+
+    const rows = d.entries || [];
+    document.getElementById('rows').innerHTML = rows.map(e => {
+      const sideCls = e.side === 'YES' ? 'side-yes' : 'side-no';
+      const statusCls = e.outcome === 'win' ? 'pos' : e.outcome === 'loss' ? 'neg' : 'dim';
+      const realized = e.realized_pnl_usd != null
+        ? `<span class="${e.realized_pnl_usd>=0?'pos':'neg'}">${e.realized_pnl_usd>=0?'+':''}$${e.realized_pnl_usd.toFixed(2)}</span>`
+        : '—';
+      return `<tr>
+        <td class="dim" style="font-size:12px;">${new Date(e.created_at*1000).toLocaleString()}</td>
+        <td>
+          <div class="mono" style="font-size:11px;">${e.ticker}</div>
+          <div class="dim" style="font-size:11px; max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${e.title||''}</div>
+        </td>
+        <td><span class="pill ${sideCls}">${e.side}</span></td>
+        <td class="num">${e.contracts}</td>
+        <td class="num">${e.entry_price_cents}¢</td>
+        <td class="num">$${e.notional_usd.toFixed(2)}</td>
+        <td><span class="pill">${e.source}</span></td>
+        <td><span class="pill">${e.confidence}</span></td>
+        <td><span class="pill ${statusCls}">${e.outcome || e.kalshi_status || 'pending'}</span></td>
+        <td class="num">${realized}</td>
+      </tr>`;
+    }).join('') || `<tr><td colspan="10" class="dim" style="text-align:center; padding:40px;">No trades yet.</td></tr>`;
+  } catch(e){}
+  setTimeout(load, 10000);
+}
+load();
+</script>
+{% endblock %}

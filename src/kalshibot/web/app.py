@@ -238,6 +238,109 @@ def create_app(state: AppState | None = None) -> Flask:
         from ..paper import PRESETS
         return render_template("paperbots.html", page="paperbots", presets=PRESETS)
 
+    @app.route("/journal")
+    def journal_page() -> str:
+        return render_template("journal.html", page="journal")
+
+    @app.route("/api/execute", methods=["POST"])
+    def api_execute():
+        payload = request.get_json(silent=True) or {}
+        ticker = payload.get("ticker")
+        side   = payload.get("side")
+        stake  = float(payload.get("stake", 0) or 0)
+        price_cents = payload.get("price_cents")
+        if not ticker or not side or stake < 1.0:
+            return jsonify({"ok": False, "error": "Need ticker, side, stake≥$1"}), 400
+        ex = state.executor()
+        if ex is None:
+            return jsonify({"ok": False, "error": "Credentials not configured"}), 400
+        # Get fresh metadata from live feed if available
+        feed = state.live()
+        sig = None
+        if feed is not None:
+            for s in feed.signals():
+                if s.ticker == ticker:
+                    sig = s; break
+        result = ex.execute_manual(
+            ticker=ticker, side=side, stake_usd=stake,
+            limit_price_cents=int(price_cents) if price_cents else None,
+            genre=sig.genre if sig else "other",
+            title=sig.title if sig else "",
+            confidence=(sig.confidence if sig else "manual"),
+            ensemble_prob=(sig.ensemble_prob if sig else 0.5),
+            reason=(sig.rationale if sig else "manual"),
+        )
+        return jsonify({
+            "ok": result.ok, "message": result.message,
+            "entry": None if result.entry is None else {
+                "id": result.entry.id, "ticker": result.entry.ticker,
+                "side": result.entry.side, "contracts": result.entry.contracts,
+                "entry_price_cents": result.entry.entry_price_cents,
+                "notional_usd": result.entry.notional_usd,
+                "kalshi_status": result.entry.kalshi_status,
+            },
+        })
+
+    @app.route("/api/risk", methods=["GET", "POST"])
+    def api_risk():
+        if request.method == "POST":
+            payload = request.get_json(silent=True) or {}
+            for key in ("kill_switch", "auto_trade_enabled"):
+                if key in payload:
+                    setattr(state.limits, key, bool(payload[key]))
+            for key in ("daily_loss_limit_usd", "max_notional_per_trade_usd",
+                         "auto_trade_min_edge"):
+                if key in payload:
+                    setattr(state.limits, key, float(payload[key]))
+            for key in ("max_open_positions", "max_open_per_genre",
+                         "max_same_series"):
+                if key in payload:
+                    setattr(state.limits, key, int(payload[key]))
+            if "auto_trade_min_conf" in payload:
+                conf = str(payload["auto_trade_min_conf"]).lower()
+                if conf in ("low", "med", "high"):
+                    state.limits.auto_trade_min_conf = conf
+        L = state.limits
+        state.risk_state.rolling_reset_if_needed()
+        return jsonify({
+            "kill_switch": L.kill_switch,
+            "auto_trade_enabled": L.auto_trade_enabled,
+            "auto_trade_min_conf": L.auto_trade_min_conf,
+            "auto_trade_min_edge": L.auto_trade_min_edge,
+            "daily_loss_limit_usd": L.daily_loss_limit_usd,
+            "max_open_positions": L.max_open_positions,
+            "max_open_per_genre": L.max_open_per_genre,
+            "max_same_series": L.max_same_series,
+            "max_notional_per_trade_usd": L.max_notional_per_trade_usd,
+            "today_realized_pnl_usd":
+                state.journal.today_realized_pnl(),
+            "today_orders_sent": state.risk_state.today_orders_sent,
+        })
+
+    @app.route("/api/journal")
+    def api_journal():
+        entries = state.journal.entries()
+        entries.sort(key=lambda e: -e.created_at)
+        return jsonify({
+            "stats": state.journal.stats(),
+            "entries": [{
+                "id": e.id, "created_at": e.created_at,
+                "ticker": e.ticker, "genre": e.genre, "title": e.title,
+                "side": e.side, "contracts": e.contracts,
+                "entry_price_cents": e.entry_price_cents,
+                "notional_usd": e.notional_usd,
+                "source": e.source, "confidence": e.confidence,
+                "ensemble_prob": e.ensemble_prob,
+                "kalshi_status": e.kalshi_status,
+                "settled_at": e.settled_at,
+                "settlement_price_cents": e.settlement_price_cents,
+                "realized_pnl_usd": e.realized_pnl_usd,
+                "outcome": e.outcome,
+                "reason": e.reason,
+            } for e in entries[:200]],
+            "learner": state.learner.summary(),
+        })
+
     @app.route("/weather")
     def weather_page() -> str:
         return render_template("weather.html", page="weather")
