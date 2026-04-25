@@ -5,6 +5,8 @@ secrets/
 *.pem
 kalshi_private_key*
 __pycache__/
+data/
+real_universe.pkl
 *.py[cod]
 *.egg-info/
 .eggs/
