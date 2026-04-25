@@ -43,4 +43,33 @@ window.KB = {
     if (!res.ok) throw new Error('fetch ' + url + ' failed');
     return res.json();
   },
+  /* Smoothly count an element's text from prev to next, ~500ms.
+     Auto-detects $, ¢, %, and decimal places to keep formatting. */
+  countTo(el, next, formatter) {
+    if (!el) return;
+    const prev = parseFloat(el.dataset.kbValue || '0');
+    el.dataset.kbValue = String(next);
+    if (Math.abs(prev - next) < 0.0005) {
+      el.textContent = formatter ? formatter(next) : next;
+      return;
+    }
+    const start = performance.now();
+    const dur = 480;
+    function step(now) {
+      const t = Math.min(1, (now - start) / dur);
+      const eased = 1 - Math.pow(1 - t, 3);   // easeOutCubic
+      const val = prev + (next - prev) * eased;
+      el.textContent = formatter ? formatter(val) : val.toFixed(2);
+      if (t < 1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  },
+  /* Add flash class briefly so the user notices a value updated. */
+  flashChange(el, dir) {
+    if (!el) return;
+    el.classList.remove('flash-up', 'flash-down');
+    void el.offsetWidth;   // restart animation
+    el.classList.add(dir > 0 ? 'flash-up' : 'flash-down');
+  },
+  liveDot() { return '<span class="live-dot"></span>'; },
 };

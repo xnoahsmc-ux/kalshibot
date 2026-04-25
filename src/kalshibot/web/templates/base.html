@@ -76,8 +76,9 @@
       document.getElementById('balAmt').textContent  = b.balance_text  || '—';
       document.getElementById('balPort').textContent = b.portfolio_text || '—';
       const fe = document.getElementById('balFeed');
-      fe.textContent = s.running ? 'running' : 'idle';
-      fe.style.color = s.running ? 'var(--ok)' : 'var(--text-mute)';
+      fe.innerHTML = s.running
+        ? '<span class="live-dot"></span><span style="color:var(--ok)">running</span>'
+        : '<span style="color:var(--text-mute)">idle</span>';
     } catch (e) {}
     setTimeout(tick, 5000);
   }
