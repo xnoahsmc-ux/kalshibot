@@ -68,6 +68,28 @@
   </main>
 </div>
 
+<!-- Quick Bet floating action button -->
+<button id="qbFab" title="Quick bet on best pick"
+        style="position:fixed; right:20px; bottom:80px; z-index:60;
+               width:56px; height:56px; border-radius:50%;
+               background: linear-gradient(135deg, var(--accent), var(--cyan));
+               box-shadow: 0 10px 30px rgba(0,255,156,.4);
+               color:#04140a; font-size:22px; padding:0; display:flex;
+               align-items:center; justify-content:center; border:none;">⚡</button>
+<div id="qbModal" style="display:none; position:fixed; inset:0; z-index:65;
+       background:rgba(2,4,10,.85); backdrop-filter:blur(8px);
+       align-items:center; justify-content:center;">
+  <div class="card" style="width:440px; max-width:94vw; padding:22px;">
+    <div class="card-head"><div><div class="card-title">Quick bet — Best pick</div>
+      <div class="card-sub">tap to bet the highest-EV pick right now</div></div></div>
+    <div id="qbBody" class="dim" style="font-size:13px; line-height:1.7;">Loading…</div>
+    <div class="row" style="justify-content:flex-end; margin-top:14px; gap:8px;">
+      <button id="qbCancel" class="btn-ghost">Cancel</button>
+      <button id="qbConfirm" class="btn-start">Confirm bet</button>
+    </div>
+  </div>
+</div>
+
 <nav class="tab-bar">
   <a href="{{ url_for('picks_page') }}"   class="{% if page=='picks' %}active{% endif %}"><span class="ico">🔥</span>Picks</a>
   <a href="{{ url_for('live_page') }}"    class="{% if page=='live'  %}active{% endif %}"><span class="ico">📡</span>Live</a>
@@ -94,6 +116,70 @@
     setTimeout(tick, 5000);
   }
   tick();
+})();
+
+// Quick Bet FAB
+(function () {
+  const fab = document.getElementById('qbFab');
+  const modal = document.getElementById('qbModal');
+  const body = document.getElementById('qbBody');
+  const confirmBtn = document.getElementById('qbConfirm');
+  const cancelBtn = document.getElementById('qbCancel');
+  let pick = null;
+  function close() { modal.style.display = 'none'; }
+  cancelBtn.addEventListener('click', close);
+  modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+
+  fab.addEventListener('click', async () => {
+    body.textContent = 'Fetching best pick…';
+    modal.style.display = 'flex';
+    try {
+      const d = await fetch('/api/picks').then(r => r.json());
+      const picks = d.picks || [];
+      if (!picks.length) {
+        body.innerHTML = '<div>No EV-positive picks right now. Start the live feed and try again.</div>';
+        confirmBtn.style.display = 'none';
+        return;
+      }
+      pick = picks[0];
+      confirmBtn.style.display = '';
+      const sideCls = pick.side === 'YES' ? 'side-yes' : 'side-no';
+      body.innerHTML = `
+        <div style="font-weight:700; font-size:14px; color:var(--text);">${pick.title || pick.ticker}</div>
+        <div class="mono dim" style="font-size:11px; margin-bottom:8px;">${pick.ticker}</div>
+        <div style="display:flex; gap:14px; flex-wrap:wrap; margin-top:10px;">
+          <span class="pill ${sideCls}">${pick.side}</span>
+          <span class="pill">${pick.confidence ? pick.confidence.toUpperCase() : ''}</span>
+          ${pick.fair_value_source ? `<span class="pill">📡 ${pick.fair_value_source}</span>` : ''}
+        </div>
+        <div style="margin-top:12px;">
+          Stake <strong style="font-family:var(--mono);">$${pick.stake_usd.toFixed(2)}</strong>
+          @ <strong>${pick.entry_price_cents}¢</strong>
+          · win <strong>${(pick.win_prob*100).toFixed(0)}%</strong>
+          · EV <strong style="color:var(--ok);">+$${pick.expected_profit_usd.toFixed(2)}</strong>
+        </div>`;
+    } catch (e) {
+      body.textContent = 'Error loading: ' + e.message;
+    }
+  });
+  confirmBtn.addEventListener('click', async () => {
+    if (!pick) return;
+    confirmBtn.disabled = true;
+    try {
+      const r = await fetch('/api/execute', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticker: pick.ticker, side: pick.side,
+                                stake: pick.stake_usd,
+                                price_cents: pick.entry_price_cents }),
+      });
+      const j = await r.json();
+      body.innerHTML = (j.ok ? '<div class="pos">✓ ' : '<div class="neg">✗ ')
+                       + (j.message || j.error) + '</div>';
+      confirmBtn.style.display = 'none';
+    } catch (e) {
+      body.innerHTML = '<div class="neg">Error: ' + e.message + '</div>';
+    } finally { confirmBtn.disabled = false; }
+  });
 })();
 
 // Mobile nav drawer

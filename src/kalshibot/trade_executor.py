@@ -6,6 +6,8 @@ Used by:
 """
 from __future__ import annotations
 
+import json
+import logging
 import math
 import threading
 import time
@@ -19,6 +21,12 @@ from .trade_journal import JournalEntry, TradeJournal
 
 if TYPE_CHECKING:
     from .live import LiveSignal
+
+
+# Print every step of an order attempt to the console where run.bat runs.
+logging.basicConfig(level=logging.INFO,
+                     format="%(asctime)s [%(name)s] %(message)s")
+log = logging.getLogger("kalshibot.exec")
 
 
 @dataclass
@@ -48,7 +56,8 @@ class TradeExecutor:
         try:
             page = self.client.get_positions(limit=200)
             raw = page.get("market_positions", [])
-        except Exception:
+        except Exception as e:
+            log.warning("get_positions failed: %s", e)
             raw = []
         out = []
         from .genres import classify
@@ -65,11 +74,67 @@ class TradeExecutor:
         return out
 
     def _current_cash(self) -> float:
+        """In live mode, query Kalshi. In dry-run, use the configured synthetic
+        bankroll so simulations work even with $0 in the real account.
+        """
+        if self.cfg.dry_run:
+            return float(self.cfg.bankroll_usd)
         try:
             bal = self.client.get_balance()
-            return float(bal.get("balance", 0)) / 100.0
-        except Exception:
+            cents = float(bal.get("balance", 0))
+            return cents / 100.0
+        except Exception as e:
+            log.warning("get_balance failed: %s", e)
             return 0.0
+
+    def diagnose(self) -> dict:
+        """Run the full pipeline read-only and return a per-step report."""
+        report: dict = {
+            "config": {
+                "env": self.cfg.env,
+                "base_url": self.cfg.base_url,
+                "dry_run": self.cfg.dry_run,
+                "api_key_id_set": bool(self.cfg.api_key_id),
+                "private_key_path_set": bool(self.cfg.api_private_key_path),
+                "bankroll_usd": self.cfg.bankroll_usd,
+                "max_position_usd": self.cfg.max_position_usd,
+                "min_edge": self.cfg.min_edge,
+            },
+            "limits": {
+                "kill_switch": self.limits.kill_switch,
+                "auto_trade_enabled": self.limits.auto_trade_enabled,
+                "daily_loss_limit_usd": self.limits.daily_loss_limit_usd,
+                "max_open_positions": self.limits.max_open_positions,
+                "max_open_per_genre": self.limits.max_open_per_genre,
+                "max_same_series": self.limits.max_same_series,
+                "max_notional_per_trade_usd": self.limits.max_notional_per_trade_usd,
+                "min_cash_buffer_usd": self.limits.min_cash_buffer_usd,
+            },
+            "state": {
+                "today_realized_pnl": self.risk_state.today_realized_pnl,
+                "today_orders_sent": self.risk_state.today_orders_sent,
+            },
+        }
+        # Reachability
+        try:
+            chk = self.client.auth_check()
+            report["auth_check"] = chk
+        except Exception as e:
+            report["auth_check"] = {"error": str(e)}
+        # Cash + positions visible to risk gate
+        report["cash_used_for_risk_check"] = self._current_cash()
+        report["open_positions"] = self._current_positions()
+        # Simulate a $5 YES order to see if it would pass the risk check
+        ok, why = check_order(
+            self.limits, self.risk_state,
+            ticker="DEMO-CHECK", genre="other",
+            notional_usd=5.0,
+            cash_available=max(report["cash_used_for_risk_check"], 0.01),
+            open_positions=report["open_positions"],
+        )
+        report["risk_check_5usd_ok"] = ok
+        report["risk_check_5usd_why"] = why
+        return report
 
     # ------------------------------------------------------------ manual path
     def execute_manual(
@@ -122,14 +187,24 @@ class TradeExecutor:
 
         cash = self._current_cash()
         positions = self._current_positions()
+        log.info(
+            "execute_manual ticker=%s side=%s stake=$%.2f price=%d¢ "
+            "contracts=%d notional=$%.2f dry_run=%s kill=%s "
+            "today_pnl=$%.2f cash=$%.2f open=%d",
+            ticker, side_upper, stake_usd, limit_price_cents, contracts,
+            notional, self.cfg.dry_run, self.limits.kill_switch,
+            self.risk_state.today_realized_pnl, cash, len(positions),
+        )
         ok, why = check_order(self.limits, self.risk_state,
                                ticker=ticker, genre=genre, notional_usd=notional,
                                cash_available=max(cash, 0.01),
                                open_positions=positions)
         if not ok:
+            log.warning("BLOCKED %s %s: %s", side_upper, ticker, why)
             return ExecutionResult(False, why)
 
         if self.cfg.dry_run:
+            log.info("DRY_RUN: not sending - writing journal entry only")
             entry = self.journal.add(
                 ticker=ticker, genre=genre, title=title,
                 side=side_upper, contracts=contracts,
@@ -142,18 +217,29 @@ class TradeExecutor:
             )
             self.risk_state.today_orders_sent += 1
             return ExecutionResult(True, f"[DRY RUN] Would buy {contracts} {side_upper} "
-                                           f"@ {limit_price_cents}¢ for ${notional:.2f}", entry)
+                                           f"@ {limit_price_cents}¢ for ${notional:.2f}. "
+                                           f"Set KALSHIBOT_DRY_RUN=false in .env to send live.", entry)
 
         # Live send.
+        body_preview = {
+            "ticker": ticker, "side": side_upper.lower(), "action": "buy",
+            "count": contracts, "type": "limit",
+            ("yes_price" if side_upper == "YES" else "no_price"): limit_price_cents,
+        }
+        log.info("LIVE submitting -> Kalshi POST /portfolio/orders: %s",
+                  json.dumps(body_preview))
         try:
             resp = self.client.place_order(
                 ticker=ticker, side=side_upper.lower(), action="buy",
                 count=contracts, type_="limit",
                 price_cents=limit_price_cents,
             )
+            log.info("Kalshi response: %s", json.dumps(resp)[:600])
         except KalshiAPIError as e:
-            return ExecutionResult(False, f"Kalshi rejected order: {e.status} {e.body[:160]}")
+            log.error("Kalshi rejected: status=%s body=%s", e.status, e.body[:300])
+            return ExecutionResult(False, f"Kalshi rejected order: {e.status} {e.body[:240]}")
         except Exception as e:
+            log.error("Order send failed: %s: %s", type(e).__name__, e)
             return ExecutionResult(False, f"Order failed: {type(e).__name__}: {e}")
 
         order = resp.get("order") or resp

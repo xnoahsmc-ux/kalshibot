@@ -253,25 +253,29 @@ class KalshiClient:
     def place_order(
         self,
         ticker: str,
-        side: str,                   # "yes" | "no"
+        side: str,                   # "yes" | "no" (case-insensitive)
         action: str,                 # "buy" | "sell"
         count: int,
         type_: str = "limit",
         price_cents: int | None = None,
         client_order_id: str | None = None,
     ) -> dict:
+        side_norm = (side or "").lower()
+        if side_norm not in ("yes", "no"):
+            raise ValueError(f"side must be 'yes' or 'no', got {side!r}")
         body: dict[str, Any] = {
             "ticker": ticker,
-            "side": side,
+            "side": side_norm,
             "action": action,
-            "count": count,
+            "count": int(count),
             "type": type_,
             "client_order_id": client_order_id or f"kbot-{int(time.time()*1000)}",
         }
         if type_ == "limit":
             if price_cents is None:
                 raise ValueError("price_cents required for limit orders")
-            body["yes_price" if side == "yes" else "no_price"] = price_cents
+            price_int = max(1, min(99, int(price_cents)))
+            body["yes_price" if side_norm == "yes" else "no_price"] = price_int
         return self._request("POST", "/portfolio/orders", json=body)
 
     def cancel_order(self, order_id: str) -> dict:

@@ -254,6 +254,70 @@ def create_app(state: AppState | None = None) -> Flask:
     def alerts_page() -> str:
         return render_template("alerts.html", page="alerts")
 
+    @app.route("/api/streaks")
+    def api_streaks():
+        """Win/loss streak + today/week realized PnL for the streak tracker."""
+        import datetime as dt
+        settled = sorted(state.journal.settled_entries(),
+                          key=lambda e: e.settled_at or 0)
+        if not settled:
+            return jsonify({"current_streak": 0, "streak_kind": "none",
+                              "best_win_streak": 0, "today_pnl": 0.0,
+                              "week_pnl": 0.0, "lifetime_pnl": 0.0,
+                              "wins": 0, "losses": 0})
+        cur = 0
+        kind = "none"
+        for e in reversed(settled):
+            if e.outcome == "win":
+                if kind in ("none", "win"): kind = "win"; cur += 1
+                else: break
+            elif e.outcome == "loss":
+                if kind in ("none", "loss"): kind = "loss"; cur += 1
+                else: break
+            else: break
+        # Best historical win streak
+        best, run = 0, 0
+        for e in settled:
+            if e.outcome == "win": run += 1; best = max(best, run)
+            else: run = 0
+        today = dt.datetime.utcnow().date()
+        week_start = today - dt.timedelta(days=today.weekday())
+        today_pnl = sum(e.realized_pnl_usd or 0 for e in settled
+                          if dt.datetime.utcfromtimestamp(e.settled_at or 0).date() == today)
+        week_pnl  = sum(e.realized_pnl_usd or 0 for e in settled
+                          if dt.datetime.utcfromtimestamp(e.settled_at or 0).date() >= week_start)
+        lifetime  = sum(e.realized_pnl_usd or 0 for e in settled)
+        return jsonify({
+            "current_streak": cur, "streak_kind": kind,
+            "best_win_streak": best,
+            "today_pnl": round(today_pnl, 2),
+            "week_pnl": round(week_pnl, 2),
+            "lifetime_pnl": round(lifetime, 2),
+            "wins": sum(1 for e in settled if e.outcome == "win"),
+            "losses": sum(1 for e in settled if e.outcome == "loss"),
+        })
+
+    @app.route("/api/goal", methods=["GET", "POST"])
+    def api_goal():
+        from pathlib import Path
+        import json as _json
+        path = Path("data/goal.json")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if request.method == "POST":
+            payload = request.get_json(silent=True) or {}
+            data = {
+                "daily_goal_usd": float(payload.get("daily_goal_usd", 50)),
+                "weekly_goal_usd": float(payload.get("weekly_goal_usd", 250)),
+            }
+            path.write_text(_json.dumps(data))
+            return jsonify({"ok": True, **data})
+        if path.exists():
+            try:
+                return jsonify(_json.loads(path.read_text()))
+            except Exception:
+                pass
+        return jsonify({"daily_goal_usd": 50.0, "weekly_goal_usd": 250.0})
+
     @app.route("/api/picks")
     def api_picks():
         from ..combo_engine import build_betting_slip
@@ -375,6 +439,23 @@ def create_app(state: AppState | None = None) -> Flask:
         elif action == "stop":
             state.scheduler.stop()
         return jsonify(state.scheduler.status())
+
+    @app.route("/api/execute/diagnose")
+    def api_execute_diagnose():
+        ex = state.executor()
+        if ex is None:
+            from ..config import load_config
+            cfg = load_config()
+            return jsonify({
+                "ok": False,
+                "error": "Credentials not configured",
+                "config": {
+                    "api_key_id_set": bool(cfg.api_key_id),
+                    "private_key_path_set": bool(cfg.api_private_key_path),
+                    "dry_run": cfg.dry_run,
+                },
+            })
+        return jsonify({"ok": True, **ex.diagnose()})
 
     @app.route("/api/execute", methods=["POST"])
     def api_execute():

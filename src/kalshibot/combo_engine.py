@@ -37,6 +37,19 @@ class Pick:
         return ((self.win_prob * (1 - self.entry_price)) / self.entry_price
                  - (1 - self.win_prob))
 
+    def conviction_score(self) -> int:
+        """0-100. Combines edge magnitude + confidence + win prob distance from 50."""
+        conf_w = {"high": 1.0, "med": 0.65, "low": 0.3}.get(self.confidence, 0.3)
+        edge_w = min(1.0, abs(self.edge) / 0.20)
+        wp_w = min(1.0, abs(self.win_prob - 0.5) * 2)
+        return int(round(100 * (0.45 * edge_w + 0.30 * conf_w + 0.25 * wp_w)))
+
+    def risk_reward(self) -> float:
+        """Max profit if win / max loss if loss."""
+        if self.entry_price <= 0 or self.entry_price >= 1:
+            return 0.0
+        return (1 - self.entry_price) / self.entry_price
+
 
 @dataclass
 class Combo:
@@ -161,6 +174,8 @@ def build_betting_slip(signals: list["LiveSignal"], bankroll: float = 100.0,
                 "expected_profit_usd": round(p.expected_profit_usd, 2),
                 "fair_value_source": p.fair_value_source,
                 "fair_value_detail": p.fair_value_detail,
+                "conviction": p.conviction_score(),
+                "risk_reward": round(p.risk_reward(), 2),
             } for p in top_picks
         ],
         "combos": [

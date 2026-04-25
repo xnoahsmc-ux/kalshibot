@@ -269,6 +269,19 @@ def setup_live_cmd(
     from .kalshi_client import KalshiClient
     cfg = load_config()
 
+    # 0. Startup banner showing the loaded config so users can see exactly
+    # which values are active without digging into .env.
+    console.print("[bold cyan]Config[/bold cyan]")
+    console.print(f"  KALSHI_ENV={cfg.env}  base_url={cfg.base_url}")
+    console.print(f"  KALSHI_API_KEY_ID={'set' if cfg.api_key_id else '[red]MISSING[/red]'}")
+    console.print(f"  KALSHI_API_PRIVATE_KEY_PATH={cfg.api_private_key_path or '[red]MISSING[/red]'}")
+    dr_color = "yellow" if cfg.dry_run else "red"
+    console.print(f"  KALSHIBOT_DRY_RUN=[{dr_color}]{cfg.dry_run}[/{dr_color}]"
+                  f"  bankroll=${cfg.bankroll_usd:.0f}  max_position=${cfg.max_position_usd:.0f}"
+                  f"  min_edge={cfg.min_edge}")
+    if not cfg.dry_run:
+        console.print("  [bold red]LIVE MODE: real orders will be submitted to Kalshi.[/bold red]")
+
     # 1. Auth check
     console.print("[bold cyan]1/4  Auth check[/bold cyan]")
     client = KalshiClient(cfg)

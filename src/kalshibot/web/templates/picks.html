@@ -8,6 +8,33 @@
   </div>
 </div>
 
+<!-- Streaks + profit goal -->
+<div class="grid-3" style="margin-bottom:18px;">
+  <div class="card" id="streakCard" style="padding:18px;">
+    <div class="card-sub">Streak</div>
+    <div style="display:flex; align-items:baseline; gap:10px; margin-top:6px;">
+      <div id="streakNum" class="mono" style="font-size:34px; font-weight:800;">0</div>
+      <div id="streakLabel" class="dim" style="font-weight:700;">no streak</div>
+    </div>
+    <div class="hint" id="streakSub" style="margin-top:4px;">—</div>
+  </div>
+  <div class="card" id="goalCard" style="padding:18px;">
+    <div class="row" style="justify-content:space-between;">
+      <div class="card-sub">Daily goal</div>
+      <a href="#" id="goalEdit" class="hint">edit</a>
+    </div>
+    <div id="goalNum" class="mono" style="font-size:24px; font-weight:800; margin-top:6px;">$0 / $50</div>
+    <div class="progress" style="margin-top:8px;"><span id="goalBar" style="width:0%;"></span></div>
+    <div class="hint" id="goalSub" style="margin-top:6px;">today's realized PnL</div>
+  </div>
+  <div class="card" id="weekCard" style="padding:18px;">
+    <div class="card-sub">Week</div>
+    <div id="weekNum" class="mono" style="font-size:24px; font-weight:800; margin-top:6px;">$0 / $250</div>
+    <div class="progress" style="margin-top:8px;"><span id="weekBar" style="width:0%;"></span></div>
+    <div class="hint" id="weekSub" style="margin-top:6px;">PnL this week</div>
+  </div>
+</div>
+
 <!-- BEST BET HERO -->
 <div id="bestBet"></div>
 
@@ -55,7 +82,50 @@ function heroImg(genre){ return `https://source.unsplash.com/400x110/?${encodeUR
 function sidePill(s){ const c = s==='YES'?'side-yes':s==='NO'?'side-no':'side-flat'; return `<span class="pill ${c}">${s}</span>`; }
 function confPill(c){ const lbl = c==='high'?'HIGH':c==='med'?'MEDIUM':'LOW'; return `<span class="conf conf-${c}"><span class="dot"></span>${lbl}</span>`; }
 
+async function loadStreaksAndGoal() {
+  try {
+    const [s, g] = await Promise.all([
+      KB.fetchJSON('/api/streaks'), KB.fetchJSON('/api/goal'),
+    ]);
+    const card = document.getElementById('streakCard');
+    const numEl = document.getElementById('streakNum');
+    const labEl = document.getElementById('streakLabel');
+    if (s.current_streak > 0) {
+      numEl.textContent = s.current_streak;
+      labEl.innerHTML = s.streak_kind === 'win'
+        ? '🔥 win streak' : '❄️ loss streak';
+      labEl.className = s.streak_kind === 'win' ? 'pos' : 'neg';
+    } else {
+      numEl.textContent = '0';
+      labEl.textContent = 'no streak';
+      labEl.className = 'dim';
+    }
+    document.getElementById('streakSub').textContent =
+      `lifetime ${s.wins}W · ${s.losses}L · best win streak ${s.best_win_streak}`;
+
+    const dailyPct = Math.max(0, Math.min(100, (s.today_pnl / Math.max(1, g.daily_goal_usd)) * 100));
+    const weekPct  = Math.max(0, Math.min(100, (s.week_pnl  / Math.max(1, g.weekly_goal_usd)) * 100));
+    document.getElementById('goalNum').innerHTML =
+      `<span class="${s.today_pnl>=0?'pos':'neg'}">${s.today_pnl>=0?'+':''}$${s.today_pnl.toFixed(2)}</span> / $${g.daily_goal_usd.toFixed(0)}`;
+    document.getElementById('goalBar').style.width = dailyPct + '%';
+    document.getElementById('weekNum').innerHTML =
+      `<span class="${s.week_pnl>=0?'pos':'neg'}">${s.week_pnl>=0?'+':''}$${s.week_pnl.toFixed(2)}</span> / $${g.weekly_goal_usd.toFixed(0)}`;
+    document.getElementById('weekBar').style.width = weekPct + '%';
+  } catch(e){}
+}
+document.getElementById('goalEdit').addEventListener('click', async (e) => {
+  e.preventDefault();
+  const cur = await KB.fetchJSON('/api/goal');
+  const d = parseFloat(prompt('Daily goal ($):', cur.daily_goal_usd) || cur.daily_goal_usd);
+  const w = parseFloat(prompt('Weekly goal ($):', cur.weekly_goal_usd) || cur.weekly_goal_usd);
+  await fetch('/api/goal', { method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ daily_goal_usd: d, weekly_goal_usd: w }) });
+  loadStreaksAndGoal();
+});
+
 async function load() {
+  loadStreaksAndGoal();
   try {
     const d = await KB.fetchJSON('/api/picks');
     const picks = d.picks || [];
@@ -152,6 +222,19 @@ async function load() {
           <div class="row" style="gap:10px; margin-bottom:8px;">
             ${sidePill(p.side)}
             <div><b>${p.entry_price_cents}¢</b> · win <b>${(p.win_prob*100).toFixed(0)}%</b></div>
+          </div>
+          <div class="row" style="gap:14px; margin-bottom:8px; font-size:12px;">
+            <div title="Conviction 0-100 combining edge + confidence + win prob">
+              <span class="dim" style="font-size:10px; text-transform:uppercase; letter-spacing:.1em; font-weight:700;">Conviction</span>
+              <div style="display:flex; align-items:center; gap:6px;">
+                <div class="mono" style="font-weight:800; font-size:16px; color:${(p.conviction>=70?'var(--ok)':p.conviction>=40?'var(--warn)':'var(--text-mute)')};">${p.conviction}</div>
+                <div style="height:4px; flex:1; min-width:60px; background:var(--glass-2); border-radius:2px; overflow:hidden;"><div style="width:${p.conviction}%; height:100%; background:${(p.conviction>=70?'var(--ok)':p.conviction>=40?'var(--warn)':'var(--text-mute)')};"></div></div>
+              </div>
+            </div>
+            <div title="Max profit ÷ max loss">
+              <span class="dim" style="font-size:10px; text-transform:uppercase; letter-spacing:.1em; font-weight:700;">R:R</span>
+              <div class="mono" style="font-weight:800; font-size:16px;">${p.risk_reward.toFixed(2)}x</div>
+            </div>
           </div>
           <div class="dim" style="font-size:12px; line-height:1.5;">${p.rationale}</div>
           ${p.fair_value_source ? `<div class="hint" style="margin-top:6px;">📡 ${p.fair_value_source}: ${p.fair_value_detail}</div>` : ''}
