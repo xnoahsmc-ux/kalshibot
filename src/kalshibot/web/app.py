@@ -242,6 +242,140 @@ def create_app(state: AppState | None = None) -> Flask:
     def journal_page() -> str:
         return render_template("journal.html", page="journal")
 
+    @app.route("/picks")
+    def picks_page() -> str:
+        return render_template("picks.html", page="picks")
+
+    @app.route("/brain")
+    def brain_page() -> str:
+        return render_template("brain.html", page="brain")
+
+    @app.route("/alerts")
+    def alerts_page() -> str:
+        return render_template("alerts.html", page="alerts")
+
+    @app.route("/api/picks")
+    def api_picks():
+        from ..combo_engine import build_betting_slip
+        feed = state.live()
+        signals = feed.signals() if feed else []
+        from ..config import load_config
+        cfg = load_config()
+        slip = build_betting_slip(signals, bankroll=cfg.bankroll_usd)
+        return jsonify({
+            "running": bool(feed and feed.status().running),
+            **slip,
+        })
+
+    @app.route("/api/brain")
+    def api_brain():
+        # Snapshot of what the bot has learned and how it's connecting markets
+        feed = state.live()
+        signals = feed.signals() if feed else []
+        # Genre breakdown
+        genre_counts: dict[str, int] = {}
+        ev_by_genre: dict[str, float] = {}
+        for s in signals:
+            genre_counts[s.genre] = genre_counts.get(s.genre, 0) + 1
+            if s.suggested_side != "flat":
+                ev_by_genre[s.genre] = ev_by_genre.get(s.genre, 0.0) + s.expected_profit
+        # Champion ensemble snapshot
+        champ = state.champion
+        # Learner summary
+        learner = state.learner.summary()
+        # Journal stats
+        jstats = state.journal.stats()
+        # Recent fair-value attributions (which signals used NWS / ESPN)
+        attributions: list[dict] = []
+        for s in signals[:20]:
+            if s.fair_value_source:
+                attributions.append({
+                    "ticker": s.ticker, "title": s.title,
+                    "source": s.fair_value_source,
+                    "detail": s.fair_value_detail,
+                    "fair_prob": s.fair_value_prob,
+                    "ensemble_prob": s.ensemble_prob,
+                    "edge": s.edge,
+                })
+        # Strategy correlation cluster: rough — group by name prefix
+        from collections import defaultdict
+        clusters: dict[str, list[str]] = defaultdict(list)
+        if champ:
+            for name in champ.weights:
+                prefix = name.split("_")[0]
+                clusters[prefix].append(name)
+        return jsonify({
+            "champion": champ.to_json() if champ else None,
+            "learner": learner,
+            "journal_stats": jstats,
+            "genre_counts": genre_counts,
+            "ev_by_genre": ev_by_genre,
+            "fair_value_attributions": attributions,
+            "strategy_clusters": {k: v for k, v in clusters.items() if len(v) > 0},
+            "live_signals": len(signals),
+            "actionable_signals": len([s for s in signals
+                                         if s.suggested_side != "flat"]),
+        })
+
+    @app.route("/api/champion/refit", methods=["POST"])
+    def api_champion_refit():
+        """Refit the champion ensemble from live Kalshi history. Runs in
+        the background so the UI doesn't block."""
+        from ..alpha import fit_from_kalshi_history
+        from ..config import load_config
+        from ..kalshi_client import KalshiClient
+        cfg = load_config()
+        if not (cfg.api_key_id and cfg.api_private_key_path):
+            return jsonify({"ok": False, "error": "Credentials not configured"}), 400
+        import threading
+        def _job():
+            try:
+                champ = fit_from_kalshi_history(KalshiClient(cfg),
+                    markets=40, lookback_hours=24 * 100)
+                if champ:
+                    state.champion = champ
+            except Exception:
+                pass
+        threading.Thread(target=_job, daemon=True).start()
+        return jsonify({"ok": True})
+
+    @app.route("/api/alerts")
+    def api_alerts():
+        from ..notifications import recent_alerts
+        return jsonify({
+            "scheduler": state.scheduler.status(),
+            "alerts": recent_alerts(50),
+        })
+
+    @app.route("/api/alerts/test", methods=["POST"])
+    def api_alerts_test():
+        from ..notifications import send_alert
+        msg = (request.get_json(silent=True) or {}).get(
+            "message", "Test alert from Kalshi Bot")
+        result = send_alert(msg, kind="test")
+        return jsonify({"ok": result.ok, "backend": result.backend,
+                        "message": result.message})
+
+    @app.route("/api/alerts/trigger", methods=["POST"])
+    def api_alerts_trigger():
+        msg = state.scheduler.trigger_now()
+        return jsonify({"ok": True, "message": msg})
+
+    @app.route("/api/scheduler", methods=["POST"])
+    def api_scheduler_set():
+        payload = request.get_json(silent=True) or {}
+        if "interval_seconds" in payload:
+            try:
+                state.scheduler.interval = max(60, int(payload["interval_seconds"]))
+            except Exception:
+                pass
+        action = payload.get("action")
+        if action == "start":
+            state.scheduler.start()
+        elif action == "stop":
+            state.scheduler.stop()
+        return jsonify(state.scheduler.status())
+
     @app.route("/api/execute", methods=["POST"])
     def api_execute():
         payload = request.get_json(silent=True) or {}

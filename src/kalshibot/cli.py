@@ -341,14 +341,25 @@ def setup_live_cmd(
     if chk.get("public_ok"):
         try:
             from .live import LiveFeed
-            feed = LiveFeed(cfg=cfg, combo=state.report.combo if state.report else None,
-                            client=client)
+            # Prefer the persisted champion ensemble if we've fitted one.
+            combo = None
+            if state.champion is not None:
+                combo = state.champion.to_combination()
+            elif state.report is not None:
+                combo = state.report.combo
+            feed = LiveFeed(cfg=cfg, combo=combo, client=client)
             feed.start()
             state.set_live(feed)
             console.print("[green]  live feed auto-started; "
                           "open Live tab to watch signals[/green]")
         except Exception as e:
             console.print(f"  [yellow]could not auto-start live feed: {e}[/yellow]")
+        try:
+            state.scheduler.start()
+            console.print("[green]  alert scheduler started "
+                          "(every 2 hours)[/green]")
+        except Exception as e:
+            console.print(f"  [yellow]scheduler issue: {e}[/yellow]")
 
     console.print(f"[green]Open http://127.0.0.1:{port}  (Ctrl+C to stop)[/green]")
     web_app.run(host="127.0.0.1", port=port, debug=False, use_reloader=False)

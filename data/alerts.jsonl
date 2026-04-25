@@ -1,0 +1,1 @@
+{"ts": 1777091447.7047532, "kind": "test", "body": "smoke", "backends": [{"name": "log", "ok": true, "msg": "Saved to data/alerts.jsonl"}]}

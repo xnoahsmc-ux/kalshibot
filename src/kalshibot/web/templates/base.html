@@ -2,7 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#06080f" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>{% block title %}Kalshi Bot{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"
@@ -12,11 +15,14 @@
 <body>
 
 <div class="topbar">
-  <div class="brandblock">
-    <div class="logo"></div>
-    <div>
-      <div class="title">Kalshi Bot</div>
-      <div class="sub">noah agacanyan</div>
+  <div class="row" style="gap:12px; align-items:center;">
+    <button id="menuBtn" class="menu-btn" aria-label="Menu"><span></span></button>
+    <div class="brandblock">
+      <div class="logo"></div>
+      <div>
+        <div class="title">Kalshi Bot</div>
+        <div class="sub">noah agacanyan</div>
+      </div>
     </div>
   </div>
   <div class="balance" id="topbalance">
@@ -37,20 +43,19 @@
   </div>
 </div>
 
+<div class="nav-backdrop" id="navBackdrop"></div>
 <div class="shell">
-  <aside class="sidebar">
+  <aside class="sidebar" id="sidebar">
     <nav class="nav">
+      <a href="{{ url_for('picks_page') }}"       class="{% if page=='picks'     %}active{% endif %}"><span class="dot"></span>Top picks</a>
       <a href="{{ url_for('live_page') }}"        class="{% if page=='live'      %}active{% endif %}"><span class="dot"></span>Live feed</a>
+      <a href="{{ url_for('brain_page') }}"       class="{% if page=='brain'     %}active{% endif %}"><span class="dot"></span>Brain</a>
       <a href="{{ url_for('paperbots_page') }}"   class="{% if page=='paperbots' %}active{% endif %}"><span class="dot"></span>Paper bots</a>
-      <a href="{{ url_for('trades_page') }}"      class="{% if page=='trades'    %}active{% endif %}"><span class="dot"></span>My trades</a>
       <a href="{{ url_for('journal_page') }}"     class="{% if page=='journal'   %}active{% endif %}"><span class="dot"></span>Journal</a>
+      <a href="{{ url_for('trades_page') }}"      class="{% if page=='trades'    %}active{% endif %}"><span class="dot"></span>My trades</a>
       <a href="{{ url_for('weather_page') }}"     class="{% if page=='weather'   %}active{% endif %}"><span class="dot"></span>Weather map</a>
       <a href="{{ url_for('popular_page') }}"     class="{% if page=='popular'   %}active{% endif %}"><span class="dot"></span>Popular markets</a>
-      <a href="{{ url_for('index') }}"            class="{% if page=='overview'  %}active{% endif %}"><span class="dot"></span>Dashboard</a>
-      <a href="{{ url_for('strategies_page') }}"  class="{% if page=='strategies'%}active{% endif %}"><span class="dot"></span>Strategies</a>
-      <a href="{{ url_for('genres_page') }}"      class="{% if page=='genres'    %}active{% endif %}"><span class="dot"></span>Genres</a>
-      <a href="{{ url_for('ensemble_page') }}"    class="{% if page=='ensemble'  %}active{% endif %}"><span class="dot"></span>Ensemble</a>
-      <a href="{{ url_for('backtest_page') }}"    class="{% if page=='backtest'  %}active{% endif %}"><span class="dot"></span>Run backtest</a>
+      <a href="{{ url_for('alerts_page') }}"      class="{% if page=='alerts'    %}active{% endif %}"><span class="dot"></span>Alerts &amp; SMS</a>
       <a href="{{ url_for('settings_page') }}"    class="{% if page=='settings'  %}active{% endif %}"><span class="dot"></span>Settings</a>
     </nav>
   </aside>
@@ -77,6 +82,19 @@
     setTimeout(tick, 5000);
   }
   tick();
+})();
+
+// Mobile nav drawer
+(function () {
+  const sidebar = document.getElementById('sidebar');
+  const backdrop = document.getElementById('navBackdrop');
+  const btn = document.getElementById('menuBtn');
+  if (!sidebar || !backdrop || !btn) return;
+  function close() { sidebar.classList.remove('open'); backdrop.classList.remove('show'); }
+  function open()  { sidebar.classList.add('open');    backdrop.classList.add('show'); }
+  btn.addEventListener('click', () => sidebar.classList.contains('open') ? close() : open());
+  backdrop.addEventListener('click', close);
+  sidebar.querySelectorAll('a').forEach(a => a.addEventListener('click', close));
 })();
 </script>
 {% block scripts %}{% endblock %}

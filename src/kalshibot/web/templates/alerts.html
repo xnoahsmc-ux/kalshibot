@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block title %}Alerts &amp; SMS · Kalshi Bot{% endblock %}
+{% block main %}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Alerts &amp; SMS</h1>
+    <p class="page-sub">Periodic top-picks alerts to your phone every 2 hours.</p>
+  </div>
+  <div class="row">
+    <button id="testBtn" class="btn-ghost">Send test alert</button>
+    <button id="triggerBtn" class="btn">Send now</button>
+  </div>
+</div>
+
+<div class="grid-4" style="margin-bottom:24px;">
+  <div class="kpi" id="kSched"><div class="label">Scheduler</div><div class="value">—</div><div class="sub">interval</div></div>
+  <div class="kpi" id="kPhone"><div class="label">Phone</div><div class="value" style="font-size:18px;">—</div><div class="sub">recipient</div></div>
+  <div class="kpi" id="kBackend"><div class="label">SMS backend</div><div class="value" style="font-size:14px;">log only</div><div class="sub">configure below</div></div>
+  <div class="kpi" id="kLast"><div class="label">Last sent</div><div class="value" style="font-size:14px;">never</div><div class="sub">—</div></div>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-head"><div><div class="card-title">Setup</div>
+      <div class="card-sub">Two ways to receive SMS</div></div></div>
+    <p class="dim" style="font-size:13px; line-height:1.7;">
+      <b style="color:var(--text);">Option A — Twilio (recommended):</b> sign up at twilio.com,
+      grab a free trial number ($15 credit), add to <code>.env</code>:
+    </p>
+    <pre style="background:var(--bg-muted); padding:10px; border-radius:8px; font-size:12px; overflow-x:auto;">
+KALSHIBOT_PHONE=4087637531
+KALSHIBOT_TWILIO_SID=ACxxxxxxxxxxxx
+KALSHIBOT_TWILIO_TOKEN=xxxxxxxxxxxx
+KALSHIBOT_TWILIO_FROM=+1xxxxxxxxxx</pre>
+    <p class="dim" style="font-size:13px; line-height:1.7; margin-top:12px;">
+      <b style="color:var(--text);">Option B — Email-to-SMS gateway (free):</b> figure out your
+      carrier and use their email gateway. Edit <code>.env</code>:
+    </p>
+    <pre style="background:var(--bg-muted); padding:10px; border-radius:8px; font-size:12px; overflow-x:auto;">
+KALSHIBOT_NOTIFY_EMAIL=4087637531@vtext.com   # Verizon
+# AT&amp;T = @txt.att.net    | T-Mobile = @tmomail.net
+# Sprint = @messaging.sprintpcs.com
+KALSHIBOT_SMTP_HOST=smtp.gmail.com
+KALSHIBOT_SMTP_PORT=587
+KALSHIBOT_SMTP_USER=you@gmail.com
+KALSHIBOT_SMTP_PASS=app-specific-password</pre>
+    <p class="hint">Restart the server after editing <code>.env</code>.</p>
+  </div>
+  <div class="card">
+    <div class="card-head"><div><div class="card-title">Schedule</div>
+      <div class="card-sub">How often the bot pings you</div></div></div>
+    <div class="field">
+      <label>Interval (seconds)</label>
+      <input id="interval" type="number" min="60" step="60" value="7200">
+    </div>
+    <div class="row">
+      <button id="startBtn" class="btn-start">Start</button>
+      <button id="stopBtn" class="btn-stop">Stop</button>
+    </div>
+    <p class="hint" style="margin-top:14px;">
+      Default 2 hours (7200s). The bot will SMS the top 3 picks plus the
+      best combo each cycle. You can also click <b>Send now</b> any time.
+    </p>
+  </div>
+</div>
+
+<div class="spacer"></div>
+<h2>Recent alerts</h2>
+<div class="tablewrap">
+  <table>
+    <thead><tr><th>When</th><th>Kind</th><th>Backend</th><th>Message</th></tr></thead>
+    <tbody id="rows"><tr><td colspan="4" class="dim" style="text-align:center; padding:30px;">No alerts yet.</td></tr></tbody>
+  </table>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function load() {
+  try {
+    const d = await KB.fetchJSON('/api/alerts');
+    const s = d.scheduler || {};
+    document.getElementById('kSched').innerHTML =
+      `<div class="label">Scheduler</div><div class="value ${s.running?'good':''}">${s.running?'RUNNING':'idle'}</div><div class="sub">every ${(s.interval_seconds/3600).toFixed(1)}h</div>`;
+    document.getElementById('kPhone').innerHTML =
+      `<div class="label">Phone</div><div class="value" style="font-size:18px;">${s.phone||'(unset)'}</div><div class="sub">recipient</div>`;
+    const backend = s.twilio_configured ? 'Twilio' : (s.smtp_configured ? 'Email→SMS' : 'log only');
+    document.getElementById('kBackend').innerHTML =
+      `<div class="label">SMS backend</div><div class="value" style="font-size:14px;">${backend}</div><div class="sub">${backend==='log only'?'configure .env':'live'}</div>`;
+    document.getElementById('kLast').innerHTML =
+      `<div class="label">Last sent</div><div class="value" style="font-size:13px;">${s.last_run ? new Date(s.last_run*1000).toLocaleString() : 'never'}</div><div class="sub">—</div>`;
+
+    document.getElementById('interval').value = s.interval_seconds || 7200;
+    const rows = d.alerts || [];
+    document.getElementById('rows').innerHTML = rows.length ? rows.map(a => `
+      <tr>
+        <td class="dim" style="font-size:12px;">${new Date(a.ts*1000).toLocaleString()}</td>
+        <td><span class="pill">${a.kind||'info'}</span></td>
+        <td>${(a.backends||[]).map(b => `<span class="pill ${b.ok?'side-yes':'side-no'}">${b.name}</span>`).join(' ')}</td>
+        <td><pre style="white-space:pre-wrap; margin:0; font-size:12px;">${a.body}</pre></td>
+      </tr>
+    `).join('') : `<tr><td colspan="4" class="dim" style="text-align:center; padding:30px;">No alerts yet.</td></tr>`;
+  } catch(e){}
+  setTimeout(load, 8000);
+}
+load();
+
+document.getElementById('testBtn').addEventListener('click', async () => {
+  const r = await fetch('/api/alerts/test', { method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message: 'Kalshi Bot test alert ✓' }) });
+  const j = await r.json();
+  alert(`Test alert: ${j.backend} — ${j.message}`);
+});
+document.getElementById('triggerBtn').addEventListener('click', async () => {
+  const r = await fetch('/api/alerts/trigger', { method: 'POST' });
+  const j = await r.json();
+  alert(j.message || 'Sent');
+});
+document.getElementById('startBtn').addEventListener('click', async () => {
+  const interval = parseInt(document.getElementById('interval').value, 10) || 7200;
+  await fetch('/api/scheduler', { method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'start', interval_seconds: interval }) });
+  load();
+});
+document.getElementById('stopBtn').addEventListener('click', async () => {
+  await fetch('/api/scheduler', { method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'stop' }) });
+  load();
+});
+</script>
+{% endblock %}

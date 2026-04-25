@@ -201,6 +201,7 @@ class LiveFeed:
                 except Exception as e:
                     self._status.last_error = f"auto-trade: {type(e).__name__}: {e}"
         # Settlement detection: any journal entry whose market is at 0/100¢ is settled.
+        new_settlements = 0
         if self._journal is not None:
             for entry in list(self._journal.open_entries()):
                 sig = self._signals.get(entry.ticker)
@@ -208,14 +209,34 @@ class LiveFeed:
                     continue
                 if sig.yes_bid >= 0.99 and sig.yes_ask >= 0.99:
                     self._journal.update_settlement(entry.id, settlement_price_cents=100)
+                    new_settlements += 1
                     if self._learner is not None and entry.contributing_strategies:
                         probs = {name: 1.0 for name in entry.contributing_strategies}
                         self._learner.update_from_trade(strategy_probs=probs, outcome=1)
                 elif sig.yes_bid <= 0.01 and sig.yes_ask <= 0.01:
                     self._journal.update_settlement(entry.id, settlement_price_cents=0)
+                    new_settlements += 1
                     if self._learner is not None and entry.contributing_strategies:
                         probs = {name: 0.0 for name in entry.contributing_strategies}
                         self._learner.update_from_trade(strategy_probs=probs, outcome=0)
+        # Continuous self-improvement: every 10 newly settled trades, refit
+        # the champion in the background so the live ensemble keeps learning.
+        self._unsettled_since_refit = getattr(self, "_unsettled_since_refit", 0) + new_settlements
+        if self._unsettled_since_refit >= 10:
+            self._unsettled_since_refit = 0
+            try:
+                from .alpha import fit_from_kalshi_history, save_champion
+                import threading
+                def _refit():
+                    champ = fit_from_kalshi_history(self.client, markets=24,
+                                                      lookback_hours=24 * 60,
+                                                      verbose=False)
+                    if champ is not None:
+                        save_champion(champ)
+                        self.combo = champ.to_combination()
+                threading.Thread(target=_refit, daemon=True).start()
+            except Exception:
+                pass
 
     def _signal_for(self, ticker: str, h: MarketHistory, snap) -> LiveSignal:
         title = self._titles.get(ticker, ticker)

@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block title %}Top picks · Kalshi Bot{% endblock %}
+{% block main %}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Top picks</h1>
+    <p class="page-sub">The single highest-EV bets the bot would take right now, and combos that stack edge across uncorrelated markets.</p>
+  </div>
+</div>
+
+<div class="grid-4" style="margin-bottom:24px;">
+  <div class="kpi" id="kSing"><div class="label">Single picks</div><div class="value">0</div><div class="sub">EV-positive</div></div>
+  <div class="kpi" id="kCombos"><div class="label">Combos</div><div class="value">0</div><div class="sub">independent legs</div></div>
+  <div class="kpi" id="kEvSum"><div class="label">Total expected profit</div><div class="value">$0.00</div><div class="sub">if you take all picks</div></div>
+  <div class="kpi" id="kStake"><div class="label">Stake required</div><div class="value">$0</div><div class="sub">across all picks</div></div>
+</div>
+
+<h2>Singles — best individual bets</h2>
+<div id="picks" class="grid-2"></div>
+
+<div class="spacer"></div>
+<h2>Combos — stack uncorrelated edges</h2>
+<div id="combos" class="grid-1"></div>
+
+<div class="spacer"></div>
+<div class="card">
+  <div class="card-head"><div><div class="card-title">How picks are chosen</div></div></div>
+  <ol class="dim" style="font-size:13px; line-height:1.7; padding-left:20px; margin:0;">
+    <li>Live signals are scored with the ensemble + real-data fair value (NWS/ESPN).</li>
+    <li>For each potential bet we compute <b style="color:var(--text);">EV per dollar</b>: <code>p_win × (1−price)/price − (1−p_win)</code>.</li>
+    <li>Singles are the top EV-positive picks, sorted by expected profit at the suggested stake.</li>
+    <li>Combos take 2–3 picks from different genres and series, multiply their independent win probabilities, and only show combos that are still EV-positive.</li>
+  </ol>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const GENRE_HERO = {
+  sports: 'sports,stadium', weather: 'weather,storm',
+  politics: 'capitol,politics', economy: 'finance,money',
+  crypto: 'bitcoin,crypto', equities: 'wall-street',
+  entertainment: 'cinema,concert', science: 'space,rocket',
+  world: 'world,flag', culture: 'celebrity,neon', other: 'abstract',
+};
+const GENRE_EMOJI = {
+  sports:'🏟️', weather:'🌡️', politics:'🗳️', economy:'💰',
+  crypto:'₿', equities:'📈', entertainment:'🎬',
+  science:'🛰️', world:'🌍', culture:'⭐', other:'📊',
+};
+function heroImg(genre){ return `https://source.unsplash.com/400x110/?${encodeURIComponent(GENRE_HERO[genre]||'abstract')}`; }
+function sidePill(s){ const c = s==='YES'?'side-yes':s==='NO'?'side-no':'side-flat'; return `<span class="pill ${c}">${s}</span>`; }
+function confPill(c){ const lbl = c==='high'?'HIGH':c==='med'?'MEDIUM':'LOW'; return `<span class="conf conf-${c}"><span class="dot"></span>${lbl}</span>`; }
+
+async function load() {
+  try {
+    const d = await KB.fetchJSON('/api/picks');
+    const picks = d.picks || [];
+    const combos = d.combos || [];
+    const totalEV = picks.reduce((a,p)=>a+p.expected_profit_usd,0)
+                  + combos.reduce((a,c)=>a+c.expected_profit_usd,0);
+    const totalStake = picks.reduce((a,p)=>a+p.stake_usd,0)
+                     + combos.reduce((a,c)=>a+c.stake_usd,0);
+
+    document.getElementById('kSing').innerHTML =
+      `<div class="label">Single picks</div><div class="value">${picks.length}</div><div class="sub">EV-positive</div>`;
+    document.getElementById('kCombos').innerHTML =
+      `<div class="label">Combos</div><div class="value">${combos.length}</div><div class="sub">independent legs</div>`;
+    document.getElementById('kEvSum').innerHTML =
+      `<div class="label">Total expected profit</div><div class="value ${totalEV>=0?'good':'bad'}">${totalEV>=0?'+':''}$${totalEV.toFixed(2)}</div><div class="sub">if you take all picks</div>`;
+    document.getElementById('kStake').innerHTML =
+      `<div class="label">Stake required</div><div class="value">$${totalStake.toFixed(2)}</div><div class="sub">across all picks</div>`;
+
+    document.getElementById('picks').innerHTML = picks.length ? picks.map((p, i) => `
+      <div class="card" style="padding:0; overflow:hidden;">
+        <div style="position:relative; height:90px; background:linear-gradient(135deg, var(--bg-muted), var(--bg-elev));">
+          <img src="${heroImg(p.genre)}" loading="lazy"
+               style="width:100%; height:100%; object-fit:cover; opacity:0.5;"
+               onerror="this.style.display='none'; document.getElementById('emoji-${i}').style.display='flex';">
+          <div id="emoji-${i}" style="display:none; position:absolute; inset:0; align-items:center; justify-content:center; font-size:42px;">${GENRE_EMOJI[p.genre]||'📊'}</div>
+          <div style="position:absolute; inset:auto 12px 8px 12px; display:flex; gap:8px; justify-content:space-between;">
+            <span class="pill">${p.genre}</span>${confPill(p.confidence)}
+          </div>
+          <div style="position:absolute; inset:0; background:linear-gradient(180deg, transparent 30%, rgba(6,8,15,.85));"></div>
+        </div>
+        <div style="padding:14px 16px;">
+          <div style="font-weight:700; font-size:14px; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${p.title || p.ticker}</div>
+          <div class="mono dim" style="font-size:11px; margin-bottom:10px;">${p.ticker}</div>
+          <div class="row" style="gap:10px; margin-bottom:8px;">
+            ${sidePill(p.side)}
+            <div><b>${p.entry_price_cents}¢</b> · win <b>${(p.win_prob*100).toFixed(0)}%</b></div>
+          </div>
+          <div class="dim" style="font-size:12px; line-height:1.5;">${p.rationale}</div>
+          ${p.fair_value_source ? `<div class="hint" style="margin-top:6px;">📡 ${p.fair_value_source}: ${p.fair_value_detail}</div>` : ''}
+          <div class="row" style="justify-content:space-between; margin-top:12px; padding-top:10px; border-top:1px solid var(--border);">
+            <div class="dim" style="font-size:12px;">Stake <b style="color:var(--text);">$${p.stake_usd.toFixed(2)}</b></div>
+            <div style="font-weight:800; color:var(--ok);">+$${p.expected_profit_usd.toFixed(2)}</div>
+          </div>
+        </div>
+      </div>
+    `).join('') : `<div class="empty"><h3>No picks right now</h3><p>Either no live signals or no signals with positive expected value. Start the live feed and check back.</p></div>`;
+
+    document.getElementById('combos').innerHTML = combos.length ? combos.map(c => `
+      <div class="card">
+        <div class="row" style="justify-content:space-between; margin-bottom:10px;">
+          <div style="font-weight:800; font-size:16px;">${c.legs.length}-leg combo · ${(c.combined_win_prob*100).toFixed(1)}% win prob</div>
+          <div style="font-weight:800; color:var(--ok);">+$${c.expected_profit_usd.toFixed(2)} EV</div>
+        </div>
+        <div class="dim" style="font-size:13px; line-height:1.6; margin-bottom:12px;">${c.rationale}</div>
+        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+          ${c.legs.map(l => `
+            <div style="background:var(--bg-muted); border:1px solid var(--border); padding:10px 12px; border-radius:8px; flex:1; min-width:200px;">
+              <div class="row" style="gap:8px; margin-bottom:4px;">${sidePill(l.side)}<span class="pill">${l.genre}</span></div>
+              <div style="font-weight:700; font-size:13px;">${l.title || l.ticker}</div>
+              <div class="mono dim" style="font-size:11px;">${l.ticker}</div>
+              <div class="hint" style="margin-top:4px;">${l.entry_price_cents}¢ · win ${(l.win_prob*100).toFixed(0)}%</div>
+            </div>
+          `).join('')}
+        </div>
+        <div class="row" style="justify-content:space-between; margin-top:12px; padding-top:10px; border-top:1px solid var(--border);">
+          <div class="dim">Stake $${c.stake_usd.toFixed(2)} · payout if all win <b style="color:var(--text);">${c.payout.toFixed(2)}x</b></div>
+          <div class="dim">EV per $1: <b style="color:var(--ok);">+${(c.ev_per_dollar*100).toFixed(0)}¢</b></div>
+        </div>
+      </div>
+    `).join('') : `<div class="empty"><h3>No combos available</h3><p>Need at least 2 medium-or-better picks across different genres.</p></div>`;
+  } catch(e){}
+  setTimeout(load, 6000);
+}
+load();
+</script>
+{% endblock %}

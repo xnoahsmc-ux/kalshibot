@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+{% block title %}Brain · Kalshi Bot{% endblock %}
+{% block main %}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Brain</h1>
+    <p class="page-sub">What the bot is learning, the connections it's drawing, and how it's improving in real time.</p>
+  </div>
+  <div class="row">
+    <button id="refitBtn" class="btn-ghost">Refit champion (100d)</button>
+  </div>
+</div>
+
+<div class="grid-4" style="margin-bottom:24px;">
+  <div class="kpi" id="kSig"><div class="label">Live signals</div><div class="value">0</div><div class="sub">— actionable</div></div>
+  <div class="kpi" id="kStrat"><div class="label">Strategies tracked</div><div class="value">0</div><div class="sub">in champion</div></div>
+  <div class="kpi" id="kLearn"><div class="label">Learner updates</div><div class="value">0</div><div class="sub">from settled trades</div></div>
+  <div class="kpi" id="kHit"><div class="label">Realized hit rate</div><div class="value">—</div><div class="sub">—</div></div>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-head"><div><div class="card-title">Champion ensemble</div>
+      <div class="card-sub">Top survivors of the 100-day walk-forward</div></div></div>
+    <div id="champBox" class="dim" style="font-size:13px;">No champion yet. Click <b>Refit champion</b>.</div>
+  </div>
+  <div class="card">
+    <div class="card-head"><div><div class="card-title">Niches printing money</div>
+      <div class="card-sub">Where the bot's edge concentrates</div></div></div>
+    <div id="genreBox"></div>
+  </div>
+</div>
+
+<div class="spacer"></div>
+<div class="grid-2">
+  <div class="card">
+    <div class="card-head"><div><div class="card-title">Real-data attributions</div>
+      <div class="card-sub">Live signals enriched with NWS / ESPN</div></div></div>
+    <div id="attrBox" class="dim" style="font-size:13px;">Waiting on live signals…</div>
+  </div>
+  <div class="card">
+    <div class="card-head"><div><div class="card-title">Top learning insights</div>
+      <div class="card-sub">Strategies trending up vs. down based on YOUR settled trades</div></div></div>
+    <div id="learnBox" class="dim" style="font-size:13px;">No settled trades yet.</div>
+  </div>
+</div>
+
+<div class="spacer"></div>
+<div class="card">
+  <div class="card-head"><div><div class="card-title">Strategy clusters</div>
+    <div class="card-sub">How the bot groups its sub-models</div></div></div>
+  <div id="clusterBox" class="dim" style="font-size:13px;">—</div>
+</div>
+
+<div class="spacer"></div>
+<div class="card">
+  <div class="card-head"><div><div class="card-title">Continuous learning loop</div></div></div>
+  <ol class="dim" style="font-size:13px; line-height:1.7; padding-left:20px; margin:0;">
+    <li><b style="color:var(--text);">Backtest:</b> 151 strategies × 100 days of real Kalshi candles, walk-forward.</li>
+    <li><b style="color:var(--text);">Champion ensemble:</b> only strategies with positive OOS Sharpe survive.</li>
+    <li><b style="color:var(--text);">Live blend:</b> ensemble + NWS weather + ESPN sports → fair value.</li>
+    <li><b style="color:var(--text);">Trade:</b> manual or auto-trade fires when EV is positive.</li>
+    <li><b style="color:var(--text);">Settle:</b> live feed detects 0¢/99¢ resolutions, marks PnL.</li>
+    <li><b style="color:var(--text);">Learn:</b> per-strategy realized hit rates Bayesian-update — winners get bigger weight, losers shrink.</li>
+    <li><b style="color:var(--text);">Refit champion:</b> every refit re-pulls 100 days and re-ranks survivors.</li>
+  </ol>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function load() {
+  try {
+    const d = await KB.fetchJSON('/api/brain');
+    document.getElementById('kSig').innerHTML =
+      `<div class="label">Live signals</div><div class="value">${d.live_signals||0}</div><div class="sub">${d.actionable_signals||0} actionable</div>`;
+    const champStrats = d.champion ? Object.keys(d.champion.weights||{}).length : 0;
+    document.getElementById('kStrat').innerHTML =
+      `<div class="label">Strategies tracked</div><div class="value">${champStrats}</div><div class="sub">in champion</div>`;
+    document.getElementById('kLearn').innerHTML =
+      `<div class="label">Learner updates</div><div class="value">${(d.learner||{}).total_updates||0}</div><div class="sub">${(d.learner||{}).strategies_tracked||0} strategies</div>`;
+    const hr = (d.journal_stats||{}).hit_rate||0;
+    document.getElementById('kHit').innerHTML =
+      `<div class="label">Realized hit rate</div><div class="value ${hr>=0.5?'good':''}">${(hr*100).toFixed(0)}%</div><div class="sub">${(d.journal_stats||{}).settled_trades||0} settled</div>`;
+
+    if (d.champion) {
+      const c = d.champion;
+      const top = (c.top_strategies||[]).map(([n,w]) =>
+        `<tr><td class="mono">${n}</td><td class="num">${(w*100).toFixed(1)}%</td></tr>`).join('');
+      document.getElementById('champBox').innerHTML = `
+        <div>Refit ${new Date(c.refit_at*1000).toLocaleString()} on <b style="color:var(--text);">${c.universe_size}</b> markets</div>
+        <div>Expected Sharpe <b class="${c.expected_sharpe>=0?'pos':'neg'}">${c.expected_sharpe.toFixed(2)}</b> · OOS Sharpe <b class="${c.oos_sharpe>=0?'pos':'neg'}">${c.oos_sharpe.toFixed(2)}</b></div>
+        <table style="margin-top:10px;"><thead><tr><th>Strategy</th><th class="num">Weight</th></tr></thead><tbody>${top}</tbody></table>
+      `;
+    }
+
+    const ev = d.ev_by_genre || {};
+    const counts = d.genre_counts || {};
+    const sortedG = Object.keys(counts).sort((a,b) => (ev[b]||0) - (ev[a]||0));
+    document.getElementById('genreBox').innerHTML = sortedG.length ?
+      sortedG.map(g => {
+        const e = ev[g] || 0;
+        return `<div class="row" style="justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--border);">
+          <span class="pill">${g}</span>
+          <span class="dim">${counts[g]} markets</span>
+          <span class="${e>=0?'pos':'neg'}" style="font-weight:700;">${e>=0?'+':''}$${e.toFixed(2)} EV</span>
+        </div>`;
+      }).join('') : '<div class="dim">no data yet</div>';
+
+    const attrs = d.fair_value_attributions || [];
+    document.getElementById('attrBox').innerHTML = attrs.length ?
+      attrs.slice(0, 8).map(a => `
+        <div style="padding:6px 0; border-bottom:1px solid var(--border);">
+          <div class="mono" style="font-size:12px;">${a.ticker}</div>
+          <div class="dim" style="font-size:12px;">${a.title||''}</div>
+          <div class="hint">📡 ${a.source} → ${(a.fair_prob*100).toFixed(0)}% · ensemble ${(a.ensemble_prob*100).toFixed(0)}% · edge ${(a.edge*100).toFixed(1)}%</div>
+        </div>
+      `).join('') : '<div class="dim">No live signals carrying external fair-value yet. Most weather/sports markets will have NWS/ESPN data attached.</div>';
+
+    const lt = (d.learner||{}).top || [];
+    document.getElementById('learnBox').innerHTML = lt.length ?
+      `<table><thead><tr><th>Strategy</th><th class="num">Realized hit</th><th class="num">Trades</th></tr></thead>
+       <tbody>${lt.map(t => `<tr><td class="mono">${t.name}</td><td class="num ${t.score>=0.5?'pos':'neg'}">${(t.score*100).toFixed(0)}%</td><td class="num">${t.trades}</td></tr>`).join('')}</tbody></table>` :
+      '<div class="dim">Learner needs settled trades to start updating. Place some bets and wait for them to resolve.</div>';
+
+    const cl = d.strategy_clusters || {};
+    const clHtml = Object.entries(cl).sort((a,b)=>b[1].length-a[1].length).slice(0,12).map(([k,v]) =>
+      `<div style="display:inline-block; margin:4px; padding:6px 10px; background:var(--bg-muted); border:1px solid var(--border); border-radius:6px;">
+         <b>${k}</b> <span class="dim">×${v.length}</span>
+       </div>`).join('');
+    document.getElementById('clusterBox').innerHTML = clHtml || '<div class="dim">no clusters yet</div>';
+  } catch(e){}
+  setTimeout(load, 8000);
+}
+document.getElementById('refitBtn').addEventListener('click', async () => {
+  await fetch('/api/champion/refit', { method: 'POST' });
+  alert('Refit started. Pulls 100 days of Kalshi data — this can take a minute.');
+});
+load();
+</script>
+{% endblock %}

@@ -10,11 +10,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ..alpha import ChampionEnsemble, load_champion
 from ..analytics import BacktestReport
 from ..learner import OnlineLearner
 from ..live import LiveFeed
 from ..paper import PaperManager
 from ..risk_limits import RiskLimits, RiskState
+from ..scheduler import AlertScheduler
 from ..trade_executor import TradeExecutor
 from ..trade_journal import TradeJournal
 
@@ -45,6 +47,8 @@ class AppState:
         self.journal = TradeJournal()
         self.learner = OnlineLearner()
         self._executor: TradeExecutor | None = None
+        self.champion: ChampionEnsemble | None = load_champion()
+        self.scheduler = AlertScheduler(self, interval_seconds=7200)
         self._load_if_exists()
 
     def paper(self) -> PaperManager:
