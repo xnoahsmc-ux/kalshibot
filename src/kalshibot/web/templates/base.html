@@ -7,6 +7,9 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>{% block title %}Kalshi Bot{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"
           onerror="window.__chartCdnFailed=true"></script>
@@ -64,6 +67,14 @@
     {% block main %}{% endblock %}
   </main>
 </div>
+
+<nav class="tab-bar">
+  <a href="{{ url_for('picks_page') }}"   class="{% if page=='picks' %}active{% endif %}"><span class="ico">🔥</span>Picks</a>
+  <a href="{{ url_for('live_page') }}"    class="{% if page=='live'  %}active{% endif %}"><span class="ico">📡</span>Live</a>
+  <a href="{{ url_for('brain_page') }}"   class="{% if page=='brain' %}active{% endif %}"><span class="ico">🧠</span>Brain</a>
+  <a href="{{ url_for('journal_page') }}" class="{% if page=='journal' %}active{% endif %}"><span class="ico">📒</span>Journal</a>
+  <a href="{{ url_for('alerts_page') }}"  class="{% if page=='alerts' %}active{% endif %}"><span class="ico">🔔</span>Alerts</a>
+</nav>
 
 <script src="{{ url_for('static', filename='app.js') }}"></script>
 <script>

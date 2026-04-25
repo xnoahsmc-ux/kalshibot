@@ -8,6 +8,9 @@
   </div>
 </div>
 
+<!-- BEST BET HERO -->
+<div id="bestBet"></div>
+
 <div class="grid-4" style="margin-bottom:24px;">
   <div class="kpi" id="kSing"><div class="label">Single picks</div><div class="value">0</div><div class="sub">EV-positive</div></div>
   <div class="kpi" id="kCombos"><div class="label">Combos</div><div class="value">0</div><div class="sub">independent legs</div></div>
@@ -61,6 +64,66 @@ async function load() {
                   + combos.reduce((a,c)=>a+c.expected_profit_usd,0);
     const totalStake = picks.reduce((a,p)=>a+p.stake_usd,0)
                      + combos.reduce((a,c)=>a+c.stake_usd,0);
+
+    // BEST BET hero - the single highest-EV pick, displayed huge.
+    const heroEl = document.getElementById('bestBet');
+    if (picks.length) {
+      const b = picks[0];
+      const sideCls = b.side === 'YES' ? 'side-yes' : 'side-no';
+      heroEl.innerHTML = `
+        <div class="card" style="margin-bottom:24px; padding:0; overflow:hidden; position:relative; border:1px solid rgba(0,255,156,.4); box-shadow: 0 0 50px rgba(0,255,156,.18);">
+          <div style="position:absolute; inset:0; background:radial-gradient(800px 200px at 0% 0%, rgba(0,255,156,.18), transparent 60%), radial-gradient(800px 200px at 100% 100%, rgba(0,212,255,.16), transparent 60%); pointer-events:none;"></div>
+          <div style="position:relative; padding:28px 32px;">
+            <div style="display:flex; gap:8px; margin-bottom:14px; align-items:center;">
+              <span class="conf conf-high"><span class="dot"></span>BEST BET RIGHT NOW</span>
+              <span class="pill">${b.genre}</span>
+              ${b.fair_value_source ? `<span class="pill" style="background:rgba(168,85,247,.12); color:#c4b5fd; border-color:rgba(168,85,247,.3);">📡 ${b.fair_value_source}</span>` : ''}
+            </div>
+            <div style="font-size:24px; font-weight:800; letter-spacing:-.02em; max-width:90%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${b.title || b.ticker}</div>
+            <div class="mono dim" style="font-size:12px; margin-top:4px;">${b.ticker}</div>
+            <div class="dim" style="font-size:13px; margin-top:14px; line-height:1.5;">${b.rationale}</div>
+            <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:18px; margin-top:24px; padding-top:20px; border-top:1px solid rgba(0,255,156,.18);">
+              <div>
+                <div class="label" style="font-size:10px; color:var(--text-mute); letter-spacing:.14em; text-transform:uppercase; font-weight:700;">Side</div>
+                <div style="margin-top:6px;"><span class="pill ${sideCls}" style="font-size:13px; padding:6px 14px;">${b.side}</span></div>
+              </div>
+              <div>
+                <div class="label" style="font-size:10px; color:var(--text-mute); letter-spacing:.14em; text-transform:uppercase; font-weight:700;">Win prob</div>
+                <div class="mono" style="font-size:30px; font-weight:800; margin-top:4px; background:linear-gradient(180deg, var(--ok), #059669); -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent;">${(b.win_prob*100).toFixed(0)}%</div>
+              </div>
+              <div>
+                <div class="label" style="font-size:10px; color:var(--text-mute); letter-spacing:.14em; text-transform:uppercase; font-weight:700;">Stake</div>
+                <div class="mono" style="font-size:30px; font-weight:800; margin-top:4px;">$${b.stake_usd.toFixed(2)}</div>
+                <div class="hint">@ ${b.entry_price_cents}¢</div>
+              </div>
+              <div>
+                <div class="label" style="font-size:10px; color:var(--text-mute); letter-spacing:.14em; text-transform:uppercase; font-weight:700;">Expected profit</div>
+                <div class="mono" style="font-size:30px; font-weight:800; margin-top:4px; background:linear-gradient(180deg, var(--ok), #059669); -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent;">+$${b.expected_profit_usd.toFixed(2)}</div>
+              </div>
+            </div>
+            <div style="margin-top:20px; display:flex; gap:10px; flex-wrap:wrap;">
+              <button class="btn-big btn-start hero-bet" data-ticker="${b.ticker}" data-side="${b.side}" data-stake="${b.stake_usd.toFixed(2)}" data-price="${b.entry_price_cents}">▶ BET ${b.side} — $${b.stake_usd.toFixed(2)}</button>
+              <a class="btn-big btn-ghost" href="/live">View live feed</a>
+            </div>
+          </div>
+        </div>`;
+      const heroBtn = document.querySelector('.hero-bet');
+      if (heroBtn) heroBtn.addEventListener('click', async () => {
+        if (!confirm(`Place ${heroBtn.dataset.side} on ${heroBtn.dataset.ticker} for $${heroBtn.dataset.stake} at ${heroBtn.dataset.price}¢?`)) return;
+        try {
+          const r = await fetch('/api/execute', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ticker: heroBtn.dataset.ticker, side: heroBtn.dataset.side,
+                                    stake: parseFloat(heroBtn.dataset.stake),
+                                    price_cents: parseInt(heroBtn.dataset.price, 10) }),
+          });
+          const j = await r.json();
+          alert(j.ok ? `✓ ${j.message}` : `✗ ${j.error || j.message}`);
+        } catch (e) { alert('Error: ' + e.message); }
+      });
+    } else {
+      heroEl.innerHTML = '';
+    }
 
     document.getElementById('kSing').innerHTML =
       `<div class="label">Single picks</div><div class="value">${picks.length}</div><div class="sub">EV-positive</div>`;
