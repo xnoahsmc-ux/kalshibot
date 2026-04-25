@@ -4,7 +4,7 @@ TESTS = tests
 PYTHONPATH ?= $(SRC)
 export PYTHONPATH
 
-.PHONY: install test backtest paper run halt resume lint clean
+.PHONY: install test backtest paper run report halt resume lint clean
 
 install:
 	$(PY) -m pip install --upgrade pip
@@ -22,6 +22,9 @@ paper:
 
 run:
 	$(PY) -m kalshibot.v2.cli run
+
+report:
+	$(PY) -m kalshibot.v2.cli report
 
 halt:
 	mkdir -p data && touch data/HALT

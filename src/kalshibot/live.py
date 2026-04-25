@@ -93,6 +93,18 @@ class LiveFeed:
         self._executor = None        # set by AppState if creds configured
         self._journal = None         # set by AppState
         self._learner = None         # set by AppState
+        self._snapshot_store = None  # SQLite snapshot writer (v2/data.py)
+        self._init_snapshot_store()
+
+    def _init_snapshot_store(self) -> None:
+        """Best-effort: open the v2 SnapshotStore so every poll persists
+        a snapshot row to data/markets.db for backtesting and reports.
+        """
+        try:
+            from .v2.data import SnapshotStore
+            self._snapshot_store = SnapshotStore("data/markets.db")
+        except Exception:
+            self._snapshot_store = None
 
     # ------------------------------------------------------------------ API
     def status(self) -> LiveStatus:
@@ -186,6 +198,21 @@ class LiveFeed:
             except Exception as e:
                 # One flaky ticker should never kill the whole poll
                 self._status.last_error = f"{ticker}: {type(e).__name__}: {e}"
+        # Persist a snapshot of the chosen markets to SQLite so the v2
+        # backtester / daily reports have real history to work from.
+        if self._snapshot_store is not None and chosen:
+            try:
+                from .v2.data import _to_market
+                rows = []
+                for raw in chosen:
+                    mk = _to_market(raw)
+                    if mk is not None:
+                        rows.append(mk)
+                if rows:
+                    self._snapshot_store.write(rows)
+            except Exception:
+                pass
+
         # After updating all signals, let the paper bots act on them.
         if self._paper_manager is not None:
             try:

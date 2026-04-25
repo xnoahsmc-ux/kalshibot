@@ -114,6 +114,22 @@ def main() -> int:
         for k, v in result.metrics.items():
             print(f"  {k}: {v}")
         return 0
+    if cmd == "report":
+        from .reports import generate
+        date = args[1] if len(args) > 1 else None
+        try:
+            from ..notifications import send_alert
+        except Exception:
+            send_alert = None
+        text, out = generate(date=date)
+        print(f"[v2 report] wrote {out}")
+        print(text)
+        # Optional broadcast — only if a backend is configured.
+        if send_alert is not None and any(os.getenv(k) for k in (
+                "KALSHIBOT_DISCORD_WEBHOOK", "KALSHIBOT_SLACK_WEBHOOK",
+                "KALSHIBOT_TWILIO_SID", "KALSHIBOT_NOTIFY_EMAIL")):
+            send_alert(text[:1800], kind="daily_report")
+        return 0
     cfg, client = _bootstrap()
     if cmd == "paper":
         return _run_loop(cfg, client, paper=True)

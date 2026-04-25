@@ -96,6 +96,34 @@ def _send_email_to_sms(body: str) -> AlertResult | None:
         return AlertResult(False, "email_sms", f"SMTP exception: {e}")
 
 
+def _send_discord(body: str) -> AlertResult | None:
+    url = os.getenv("KALSHIBOT_DISCORD_WEBHOOK")
+    if not url:
+        return None
+    try:
+        r = requests.post(url, json={"content": body[:1900]}, timeout=8)
+        if r.status_code in (200, 204):
+            return AlertResult(True, "discord", "posted to Discord")
+        return AlertResult(False, "discord",
+                            f"Discord error {r.status_code}: {r.text[:200]}")
+    except Exception as e:
+        return AlertResult(False, "discord", f"Discord exception: {e}")
+
+
+def _send_slack(body: str) -> AlertResult | None:
+    url = os.getenv("KALSHIBOT_SLACK_WEBHOOK")
+    if not url:
+        return None
+    try:
+        r = requests.post(url, json={"text": body[:1900]}, timeout=8)
+        if r.status_code in (200, 204):
+            return AlertResult(True, "slack", "posted to Slack")
+        return AlertResult(False, "slack",
+                            f"Slack error {r.status_code}: {r.text[:200]}")
+    except Exception as e:
+        return AlertResult(False, "slack", f"Slack exception: {e}")
+
+
 def send_alert(body: str, *, kind: str = "info") -> AlertResult:
     to_number = os.getenv("KALSHIBOT_PHONE", "")
     record = {"ts": time.time(), "kind": kind, "body": body, "backends": []}
@@ -111,6 +139,20 @@ def send_alert(body: str, *, kind: str = "info") -> AlertResult:
 
     # Try Email-to-SMS
     r = _send_email_to_sms(body)
+    if r is not None:
+        record["backends"].append({"name": r.backend, "ok": r.ok, "msg": r.message})
+        if r.ok:
+            _log(record); return r
+
+    # Try Discord
+    r = _send_discord(body)
+    if r is not None:
+        record["backends"].append({"name": r.backend, "ok": r.ok, "msg": r.message})
+        if r.ok:
+            _log(record); return r
+
+    # Try Slack
+    r = _send_slack(body)
     if r is not None:
         record["backends"].append({"name": r.backend, "ok": r.ok, "msg": r.message})
         if r.ok:

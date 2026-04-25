@@ -320,14 +320,63 @@ def create_app(state: AppState | None = None) -> Flask:
 
     @app.route("/api/picks")
     def api_picks():
+        """Top picks, preferring the v2 stack when its universe + signals
+        are healthy. Falls back to the legacy combo engine.
+        """
         from ..combo_engine import build_betting_slip
+        from ..config import load_config
         feed = state.live()
         signals = feed.signals() if feed else []
-        from ..config import load_config
         cfg = load_config()
         slip = build_betting_slip(signals, bankroll=cfg.bankroll_usd)
+
+        # v2 augmentation: when we have a live feed AND credentials,
+        # also produce a v2 evaluation for the same markets and surface
+        # whichever picks v2 endorses with positive edge + min confidence.
+        v2_picks: list[dict] = []
+        try:
+            if feed and cfg.api_key_id and cfg.api_private_key_path:
+                from ..v2 import config as v2cfg, strategy as v2strategy
+                from ..v2.data import Market
+                from ..v2.risk import DayState, Position
+                vc = v2cfg.load("config.yaml")
+                vc.bankroll_usd = cfg.bankroll_usd
+                day = DayState()
+                # We rebuild Market objects from live signals so v2 can score
+                # them without making a separate Kalshi roundtrip.
+                for s in signals[:30]:
+                    m = Market(
+                        ticker=s.ticker, title=s.title,
+                        event_ticker=s.ticker.split("-", 1)[0],
+                        series_ticker=s.ticker.split("-", 1)[0],
+                        yes_bid=s.yes_bid, yes_ask=s.yes_ask,
+                        last_price=s.last,
+                        volume_24h_usd=s.volume * s.last,
+                        open_interest=200,
+                        minutes_to_close=s.minutes_to_close,
+                    )
+                    hist = feed.history(s.ticker)
+                    mids = [float(v) for v in hist.mid.tolist()[-10:]] if hist is not None else [m.mid]
+                    d = v2strategy.evaluate(m, vc, vc.bankroll_usd, [], day, mids)
+                    if d.intent is not None:
+                        v2_picks.append({
+                            "ticker": d.intent.ticker,
+                            "side": d.intent.side.upper(),
+                            "fair_value": round(d.fair_value, 3),
+                            "edge_cents": d.edge_cents,
+                            "confidence": round(d.confidence, 2),
+                            "stake_usd": round(d.intent.contracts * d.intent.target_price_cents / 100.0, 2),
+                            "contracts": d.intent.contracts,
+                            "target_price_cents": d.intent.target_price_cents,
+                            "contributors": [s.name for s in d.contributors],
+                            "reason": d.intent.reason,
+                        })
+        except Exception:
+            v2_picks = []
+
         return jsonify({
             "running": bool(feed and feed.status().running),
+            "v2_picks": v2_picks,
             **slip,
         })
 
