@@ -255,6 +255,8 @@ def setup_live_cmd(
     fallback_synth_markets: int = typer.Option(24,
         help="If real data fails, synthesize this many to still build an ensemble"),
     port: int = typer.Option(8080),
+    host: str = typer.Option("127.0.0.1",
+        help="Bind address. Use 0.0.0.0 to let your phone on the same WiFi connect."),
 ):
     """One command does it all: auth check -> fetch real Kalshi history ->
     backtest -> save ensemble -> launch the web UI.
@@ -374,8 +376,11 @@ def setup_live_cmd(
         except Exception as e:
             console.print(f"  [yellow]scheduler issue: {e}[/yellow]")
 
-    console.print(f"[green]Open http://127.0.0.1:{port}  (Ctrl+C to stop)[/green]")
-    web_app.run(host="127.0.0.1", port=port, debug=False, use_reloader=False)
+    console.print(f"[green]Open http://{host}:{port}  (Ctrl+C to stop)[/green]")
+    if host in ("0.0.0.0", "::"):
+        console.print("[yellow]  binding to all interfaces — phone on the "
+                      "same WiFi can reach this URL too.[/yellow]")
+    web_app.run(host=host, port=port, debug=False, use_reloader=False)
 
 
 @app.command()
