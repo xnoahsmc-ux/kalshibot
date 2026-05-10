@@ -1,0 +1,189 @@
+{% extends "base.html" %}
+{% block title %}Backtest engine · Kalshi Bot{% endblock %}
+{% block main %}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Backtest engine</h1>
+    <p class="page-sub">Replay the 3-strategy v2 stack against real resolved Kalshi markets. Fees, slippage, and limit-style fills modeled.</p>
+  </div>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-head"><div><div class="card-title">Configuration</div></div></div>
+    <div class="field">
+      <label>Strategies</label>
+      <div class="row" style="gap:14px;">
+        <label class="row" style="gap:6px;"><input type="checkbox" id="s_weather" checked> Weather signal</label>
+        <label class="row" style="gap:6px;"><input type="checkbox" id="s_arb" checked> Complementary arb</label>
+        <label class="row" style="gap:6px;"><input type="checkbox" id="s_fade" checked> Overreaction fade</label>
+      </div>
+    </div>
+    <div class="row" style="gap:14px;">
+      <div class="field" style="flex:1;">
+        <label>Starting bankroll</label>
+        <input id="bankroll" type="number" value="10000" min="100" step="100">
+      </div>
+      <div class="field" style="flex:1;">
+        <label>Min edge (¢)</label>
+        <input id="min_edge" type="number" value="3" min="1" step="1">
+      </div>
+      <div class="field" style="flex:1;">
+        <label>Max position ($)</label>
+        <input id="max_pos" type="number" value="250" min="10" step="10">
+      </div>
+    </div>
+    <div class="row" style="gap:14px;">
+      <div class="field" style="flex:1;">
+        <label>Series prefix (optional)</label>
+        <input id="series" type="text" placeholder="e.g. KXHIGHNY">
+      </div>
+      <div class="field" style="flex:1;">
+        <label>Since (UTC date, optional)</label>
+        <input id="since" type="text" placeholder="2026-01-01">
+      </div>
+    </div>
+    <div class="row">
+      <button id="fetchBtn" class="btn-ghost">1️⃣ Fetch settled markets</button>
+      <button id="runBtn" class="btn">2️⃣ Run backtest</button>
+    </div>
+    <div id="status" class="hint" style="margin-top:10px;">—</div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><div><div class="card-title">Headline metrics</div></div></div>
+    <div id="metrics" class="grid-3" style="gap:8px;"></div>
+    <h2 style="margin-top:14px;">P&L by strategy</h2>
+    <div id="byStrategy" class="dim">—</div>
+  </div>
+</div>
+
+<div class="spacer"></div>
+<div class="card">
+  <div class="card-head"><div><div class="card-title">Equity curve</div></div></div>
+  <div class="chart-wrap big"><canvas id="eqChart"></canvas></div>
+</div>
+
+<div class="spacer"></div>
+<h2>Trades</h2>
+<div class="tablewrap">
+  <table>
+    <thead><tr>
+      <th>Time</th><th>Ticker</th><th>Strategy</th><th>Side</th>
+      <th class="num">Qty</th><th class="num">Entry</th><th class="num">Exit</th>
+      <th class="num">Edge</th><th class="num">Net P&L</th>
+    </tr></thead>
+    <tbody id="tradeRows"><tr><td colspan="9" class="dim" style="text-align:center; padding:30px;">Run a backtest above.</td></tr></tbody>
+  </table>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let eqChart = null;
+
+function setStatus(msg, kind) {
+  const s = document.getElementById('status');
+  s.style.color = kind === 'bad' ? 'var(--bad)' : kind === 'ok' ? 'var(--ok)' : 'var(--text-dim)';
+  s.textContent = msg;
+}
+
+document.getElementById('fetchBtn').addEventListener('click', async () => {
+  setStatus('Fetching settled markets…');
+  try {
+    const r = await fetch('/api/backtest/fetch', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        series_prefix: document.getElementById('series').value || null,
+        pages: 6, with_trades: true,
+      }),
+    });
+    const j = await r.json();
+    if (j.ok) setStatus(`Cached ${j.markets_cached} markets, ${j.trade_ticks_cached} trade ticks.`, 'ok');
+    else setStatus(`Fetch failed: ${j.error}`, 'bad');
+  } catch (e) {
+    setStatus(`Error: ${e.message}`, 'bad');
+  }
+});
+
+document.getElementById('runBtn').addEventListener('click', async () => {
+  setStatus('Running backtest…');
+  const strategies = [];
+  if (document.getElementById('s_weather').checked) strategies.push('weather_signal');
+  if (document.getElementById('s_arb').checked)     strategies.push('complementary_arb');
+  if (document.getElementById('s_fade').checked)    strategies.push('overreaction_fade');
+  const since = document.getElementById('since').value;
+  let since_ts = 0;
+  if (since) since_ts = Math.floor(new Date(since + 'T00:00:00Z').getTime() / 1000);
+  try {
+    const r = await fetch('/api/backtest/run', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        strategies,
+        bankroll_usd: parseFloat(document.getElementById('bankroll').value),
+        min_edge_cents: parseInt(document.getElementById('min_edge').value, 10),
+        max_position_usd: parseFloat(document.getElementById('max_pos').value),
+        series_prefix: document.getElementById('series').value || null,
+        since_ts,
+      }),
+    });
+    const j = await r.json();
+    if (!j.ok) { setStatus(`Run failed: ${j.error || ''}`, 'bad'); return; }
+    setStatus(`Done — ${j.summary.trades} trades.`, 'ok');
+    const s = j.summary;
+    const totCls = s.total_pnl_usd >= 0 ? 'good' : 'bad';
+    document.getElementById('metrics').innerHTML = `
+      <div class="kpi ${totCls}"><div class="label">Total PnL</div>
+        <div class="value">${s.total_pnl_usd>=0?'+':''}$${s.total_pnl_usd.toFixed(2)}</div></div>
+      <div class="kpi"><div class="label">Hit rate</div>
+        <div class="value">${(s.hit_rate*100).toFixed(0)}%</div>
+        <div class="sub">${s.wins}W / ${s.losses}L</div></div>
+      <div class="kpi"><div class="label">Sharpe</div>
+        <div class="value">${s.sharpe.toFixed(2)}</div></div>
+      <div class="kpi"><div class="label">Max DD</div>
+        <div class="value">${s.max_drawdown_pct.toFixed(1)}%</div></div>
+      <div class="kpi"><div class="label">Avg edge</div>
+        <div class="value">${s.avg_edge_cents.toFixed(1)}¢</div></div>
+      <div class="kpi"><div class="label">Trades</div>
+        <div class="value">${s.trades}</div></div>`;
+    document.getElementById('byStrategy').innerHTML =
+      Object.entries(s.pnl_by_strategy || {}).map(([k, v]) =>
+        `<div class="row" style="justify-content:space-between; padding:4px 0; border-bottom:1px solid var(--border);">
+           <span class="mono">${k}</span>
+           <span class="dim">${s.trade_count_by_strategy[k] || 0} trades</span>
+           <span class="${v>=0?'pos':'neg'}" style="font-weight:700;">${v>=0?'+':''}$${v.toFixed(2)}</span>
+         </div>`).join('') || '<div class="dim">(no trades)</div>';
+    // Equity curve
+    const labels = j.bankroll_curve.map(p => new Date(p[0] * 1000).toLocaleDateString());
+    const data = j.bankroll_curve.map(p => p[1]);
+    if (eqChart) eqChart.destroy();
+    eqChart = new Chart(document.getElementById('eqChart'), {
+      type: 'line',
+      data: { labels, datasets: [{
+        label: 'Bankroll', data, borderColor: '#22c55e',
+        backgroundColor: 'rgba(34,197,94,.18)', fill: true,
+        pointRadius: 0, tension: 0.2,
+      }] },
+      options: { maintainAspectRatio: false,
+                  scales: { x: { display: false } } },
+    });
+    // Trades table
+    document.getElementById('tradeRows').innerHTML = (j.trades || []).map(t => `
+      <tr>
+        <td class="dim" style="font-size:11px;">${new Date(t.ts*1000).toLocaleString()}</td>
+        <td class="mono">${t.ticker}</td>
+        <td><span class="pill">${t.strategy}</span></td>
+        <td><span class="pill ${t.side==='yes'?'side-yes':'side-no'}">${t.side.toUpperCase()}</span></td>
+        <td class="num">${t.contracts}</td>
+        <td class="num">${t.entry}¢</td>
+        <td class="num">${t.exit}¢</td>
+        <td class="num">${t.edge_c>=0?'+':''}${t.edge_c}¢</td>
+        <td class="num ${t.net_pnl_usd>=0?'pos':'neg'}">${t.net_pnl_usd>=0?'+':''}$${t.net_pnl_usd.toFixed(2)}</td>
+      </tr>`).join('') ||
+      `<tr><td colspan="9" class="dim" style="text-align:center; padding:30px;">No trades fired.</td></tr>`;
+  } catch (e) {
+    setStatus(`Error: ${e.message}`, 'bad');
+  }
+});
+</script>
+{% endblock %}

@@ -254,6 +254,96 @@ def create_app(state: AppState | None = None) -> Flask:
     def alerts_page() -> str:
         return render_template("alerts.html", page="alerts")
 
+    @app.route("/backtest-engine")
+    def backtest_engine_page() -> str:
+        return render_template("backtest_engine.html", page="backtest-engine")
+
+    @app.route("/paper")
+    def paper_page() -> str:
+        return render_template("paper.html", page="paper")
+
+    @app.route("/api/backtest/fetch", methods=["POST"])
+    def api_backtest_fetch():
+        """Pull settled Kalshi markets into the historical SQLite cache."""
+        from ..config import load_config
+        from ..kalshi_client import KalshiClient
+        from ..v2.kalshi_historical import HistoricalStore, fetch_settled, fetch_trades_for
+        payload = request.get_json(silent=True) or {}
+        series_prefix = payload.get("series_prefix")
+        pages = int(payload.get("pages", 6))
+        with_trades = bool(payload.get("with_trades", True))
+        cfg = load_config()
+        if not (cfg.api_key_id and cfg.api_private_key_path):
+            return jsonify({"ok": False, "error": "Credentials not configured"}), 400
+        client = KalshiClient(cfg)
+        store = HistoricalStore()
+        try:
+            n = fetch_settled(client, store, series_prefix=series_prefix, pages=pages)
+            traded = 0
+            if with_trades:
+                for m in store.list_markets(series_prefix=series_prefix, limit=200):
+                    traded += fetch_trades_for(client, store, m.ticker, max_pages=2)
+            return jsonify({"ok": True, "markets_cached": n,
+                              "trade_ticks_cached": traded})
+        except Exception as e:
+            return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}"}), 500
+        finally:
+            store.close()
+
+    @app.route("/api/backtest/run", methods=["POST"])
+    def api_backtest_run():
+        """Run the event-driven backtest over the cached historical data."""
+        from ..v2.backtest_engine import run as run_bt
+        from ..v2.kalshi_historical import HistoricalStore
+        payload = request.get_json(silent=True) or {}
+        enabled = set(payload.get("strategies") or [
+            "weather_signal", "complementary_arb", "overreaction_fade"])
+        bankroll = float(payload.get("bankroll_usd", 10_000))
+        min_edge = int(payload.get("min_edge_cents", 3))
+        max_pos = float(payload.get("max_position_usd", 250))
+        since_ts = int(payload.get("since_ts", 0))
+        prefix = payload.get("series_prefix")
+        store = HistoricalStore()
+        try:
+            res = run_bt(store, starting_bankroll_usd=bankroll,
+                          enabled_strategies=enabled, min_edge_cents=min_edge,
+                          max_position_usd=max_pos, since_ts=since_ts,
+                          series_prefix=prefix)
+            return jsonify({
+                "ok": True, "summary": res.summary(),
+                "bankroll_curve": [[ts, round(b, 2)]
+                                     for ts, b in res.bankroll_curve],
+                "trades": [{
+                    "ticker": t.ticker, "strategy": t.strategy, "side": t.side,
+                    "contracts": t.contracts,
+                    "entry": t.entry_price_cents, "exit": t.exit_price_cents,
+                    "net_pnl_usd": round(t.net_pnl_cents / 100, 2),
+                    "edge_c": t.edge_at_entry_cents,
+                    "ts": t.entry_ts,
+                } for t in res.trades[:500]],
+            })
+        finally:
+            store.close()
+
+    @app.route("/api/paper/status")
+    def api_paper_status():
+        """Paper trading mirror: virtual $10k applying the live signals.
+        Reads the existing paper bot leaderboard + most-recent decisions."""
+        pm = state.paper()
+        bots = pm.bots()
+        head = bots[0] if bots else None
+        return jsonify({
+            "running": bool(state.live() and state.live().status().running),
+            "virtual_bankroll": 10_000,
+            "leader": None if head is None else {
+                "name": head.name, "equity": round(head.equity, 2),
+                "pnl": round(head.total_pnl, 2),
+                "pnl_pct": round(head.pnl_pct * 100, 2),
+            },
+            "open_count": sum(len(b.open_trades) for b in bots),
+            "trade_count": sum(len(b.closed_trades) + len(b.open_trades) for b in bots),
+        })
+
     @app.route("/api/streaks")
     def api_streaks():
         """Win/loss streak + today/week realized PnL for the streak tracker."""

@@ -30,7 +30,8 @@ def test_pages_render(tmp_path):
     for path in ["/", "/strategies", "/genres", "/markets", "/ensemble",
                  "/reliability", "/live", "/trades", "/popular",
                  "/paperbots", "/weather", "/journal", "/picks",
-                 "/brain", "/alerts", "/settings", "/backtest"]:
+                 "/brain", "/alerts", "/settings", "/backtest",
+                 "/backtest-engine", "/paper"]:
         r = client.get(path)
         assert r.status_code == 200, (path, r.status_code)
         assert b"Kalshi Bot" in r.data

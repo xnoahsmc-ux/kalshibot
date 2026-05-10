@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Paper trading · Kalshi Bot{% endblock %}
+{% block main %}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Paper trading</h1>
+    <p class="page-sub">Virtual $10,000 mirror of the live bot. Same signals, same risk, zero real money.</p>
+  </div>
+  <div class="row">
+    <a class="btn" href="{{ url_for('live_page') }}">Open live feed →</a>
+  </div>
+</div>
+
+<div class="grid-4" style="margin-bottom:24px;">
+  <div class="kpi" id="kRun"><div class="label">Status</div><div class="value">idle</div><div class="sub">paper mirror</div></div>
+  <div class="kpi" id="kLeader"><div class="label">Leader</div><div class="value" style="font-size:20px;">—</div><div class="sub">by virtual equity</div></div>
+  <div class="kpi" id="kPnl"><div class="label">Virtual PnL</div><div class="value">$0.00</div><div class="sub">leader</div></div>
+  <div class="kpi" id="kTrades"><div class="label">Paper trades</div><div class="value">0</div><div class="sub">open + closed</div></div>
+</div>
+
+<div class="card">
+  <div class="card-head"><div><div class="card-title">How paper trading works</div></div></div>
+  <ul class="dim" style="font-size:13px; line-height:1.7; padding-left:20px; margin:0;">
+    <li>Open the <a href="{{ url_for('paperbots_page') }}">Paper bots</a> page to see the full leaderboard of virtual personalities racing.</li>
+    <li>Each paper bot consumes the same signals the live bot does — but writes
+        to <code>data/paper_ledger.jsonl</code> instead of Kalshi.</li>
+    <li>The leader's strategy is what would be hitting the live order book
+        right now if you trusted it.</li>
+    <li>This page is a quick-glance status; see the
+        <a href="{{ url_for('journal_page') }}">Journal</a> for full trade history
+        and the <a href="{{ url_for('backtest_engine_page') }}">Backtest engine</a>
+        to replay historical Kalshi markets.</li>
+  </ul>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function refresh() {
+  try {
+    const d = await KB.fetchJSON('/api/paper/status');
+    document.getElementById('kRun').innerHTML =
+      `<div class="label">Status</div><div class="value ${d.running?'good':''}">${d.running?'RUNNING':'idle'}</div><div class="sub">paper mirror</div>`;
+    const L = d.leader;
+    document.getElementById('kLeader').innerHTML =
+      `<div class="label">Leader</div><div class="value" style="font-size:20px;">${L ? L.name : '—'}</div><div class="sub">by virtual equity</div>`;
+    const pnl = L ? L.pnl : 0;
+    document.getElementById('kPnl').innerHTML =
+      `<div class="label">Virtual PnL</div><div class="value ${pnl>=0?'good':'bad'}">${pnl>=0?'+':''}$${pnl.toFixed(2)}</div><div class="sub">leader</div>`;
+    document.getElementById('kTrades').innerHTML =
+      `<div class="label">Paper trades</div><div class="value">${d.trade_count||0}</div><div class="sub">${d.open_count||0} open</div>`;
+  } catch(e){}
+  setTimeout(refresh, 5000);
+}
+refresh();
+</script>
+{% endblock %}
