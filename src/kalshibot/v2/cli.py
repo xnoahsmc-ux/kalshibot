@@ -130,6 +130,23 @@ def main() -> int:
                 "KALSHIBOT_TWILIO_SID", "KALSHIBOT_NOTIFY_EMAIL")):
             send_alert(text[:1800], kind="daily_report")
         return 0
+    if cmd == "lab":
+        # 1. Halt trading first — we don't want to keep losing while we
+        #    re-evaluate which strategies actually work.
+        Path("data").mkdir(parents=True, exist_ok=True)
+        Path("data/HALT").touch()
+        print("[lab] HALT engaged. Bot will refuse new orders until "
+                "you run `make resume`.")
+        cfg, client = _bootstrap()
+        from .strategy_lab import autotune_config, run_lab, write_report
+        out = run_lab(client=client, markets=30, lookback_hours=24 * 30)
+        path = write_report(out)
+        print(f"[lab] wrote {path}")
+        for name, r in out["results"].items():
+            print(f"  {name}: trades={r.trades} hit={r.hit_rate*100:.1f}% "
+                    f"pnl=${r.total_pnl_usd:+.2f} sharpe={r.sharpe:+.2f}")
+        autotune_config(out)
+        return 0
     cfg, client = _bootstrap()
     if cmd == "paper":
         return _run_loop(cfg, client, paper=True)
